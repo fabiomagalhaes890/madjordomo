@@ -1,0 +1,22 @@
+# Segredos e estado — NUNCA comitar
+config.json
+state.json
+browser_state.json
+google_client.json
+google_token.json
+ms_token.json
+
+# Perfil do navegador e evidências capturadas (contêm dados do chat)
+brchrome/
+brchrome-*/
+evidencia/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Sistema
+.DS_Store
+Thumbs.db

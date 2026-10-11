@@ -1,0 +1,46 @@
+{
+  "telegram_token": "COLE_O_TOKEN_DO_BOTFATHER",
+  "allowed_user_id": 0,
+  "chat_id": 0,
+  "topic_id": null,
+
+  "project_dir": "C:/Projetos/meu-projeto",
+  "claude_cmd": "claude",
+  "claude_args": ["--permission-mode", "acceptEdits"],
+  "timeout_min": 90,
+
+  "remote_preamble": "[Modo remoto] Você roda sem terminal; o usuário acompanha pelo Telegram, no celular. Em qualquer checkpoint, PARE e termine com um resumo curto (máx ~15 linhas), a pergunta objetiva e o path do artefato em docs/tasks/<slug>/.",
+
+  "commands": {
+    "/analisar": {
+      "desc": "feature-pipeline até o 1o checkpoint",
+      "needs_card": true,
+      "new_session": true,
+      "template": "Rode a skill feature-pipeline para o card {card}. Observações: {obs}."
+    },
+    "/investigar": {
+      "desc": "bugfix-pipeline só o diagnóstico",
+      "needs_card": true,
+      "new_session": true,
+      "template": "Rode a skill bugfix-pipeline para o card {card}, apenas a investigação, parando no checkpoint do diagnóstico. Não corrija nada. Observações: {obs}."
+    },
+    "/ok": {
+      "desc": "aprova o checkpoint e segue",
+      "needs_card": false,
+      "new_session": false,
+      "template": "Aprovado. Siga para a próxima fase do pipeline do card {card}. Observações: {obs}."
+    },
+    "/corrigir": {
+      "desc": "após /investigar, segue para o fix",
+      "needs_card": false,
+      "new_session": false,
+      "template": "Diagnóstico do card {card} aprovado. Siga o bugfix-pipeline a partir da correção. Observações: {obs}."
+    },
+    "/pr": {
+      "desc": "commit, push, PR e move o card (após revisar o diff)",
+      "needs_card": false,
+      "new_session": false,
+      "template": "O usuário revisou o diff do card {card} e autorizou a entrega. Crie a branch do card se necessário, faça commit no padrão do projeto, push, abra o pull request sem merge e mova o card. Responda com o link do PR. Observações: {obs}."
+    }
+  }
+}

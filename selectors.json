@@ -1,0 +1,20 @@
+{
+  "teams": {
+    "url": "https://teams.microsoft.com/v2/",
+    "ready": "[data-tid=\"app-layout-area--main\"], #app",
+    "unread": "[data-tid=\"chat-list-item\"]:has([data-tid=\"unread-indicator\"]), div[role=\"treeitem\"][aria-label*=\"unread\"], div[role=\"treeitem\"][aria-label*=\"não lida\"]",
+    "name_attr": "aria-label",
+    "compose": "div[role=\"textbox\"][contenteditable=\"true\"], div[data-tid=\"ckeditor\"] [contenteditable=\"true\"]"
+  },
+  "slack": {
+    "url": "https://app.slack.com/client",
+    "ready": ".p-channel_sidebar__list, [data-qa=\"slack_kit_list\"]",
+    "unread": "[data-qa=\"channel-sidebar-channel\"]:has(.p-channel_sidebar__badge)",
+    "name_attr": "aria-label",
+    "name_el": ".p-channel_sidebar__name",
+    "compose": "[data-qa=\"message_input\"] [contenteditable=\"true\"], .ql-editor[contenteditable=\"true\"]",
+    "msg_container": "[data-qa=\"message_container\"]",
+    "msg_sender": "[data-qa=\"message_sender_name\"]",
+    "msg_text": "[data-qa=\"message-text\"]"
+  }
+}

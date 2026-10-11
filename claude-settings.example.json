@@ -1,0 +1,46 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__atlassian",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git grep:*)",
+      "Bash(git branch:*)",
+      "Bash(git fetch:*)",
+      "Bash(git -C:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr view:*)",
+      "Bash(glab mr create:*)",
+      "Bash(glab mr view:*)",
+      "Bash(az repos pr create:*)",
+      "Bash(az repos pr show:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet test:*)",
+      "Bash(dotnet restore:*)",
+      "Bash(msbuild:*)",
+      "Bash(npm ci:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx ng test:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git merge:*)",
+      "Bash(gh pr merge:*)"
+    ]
+  }
+}
