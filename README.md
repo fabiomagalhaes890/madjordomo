@@ -478,7 +478,7 @@ repositório contém dados de clientes — todos os exemplos são genéricos.
 ## Apoie o projeto
 
 O Majordomo é gratuito e open source. Se ele te economiza tempo, considere apoiar pelo
-[GitHub Sponsors](https://github.com/sponsors/SEU_USUARIO) — ajuda a manter o
+[GitHub Sponsors](https://github.com/sponsors/fabiomagalhaes890) — ajuda a manter o
 desenvolvimento, a documentação e o site.
 
 ## Licença
