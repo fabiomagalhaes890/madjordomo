@@ -20,3 +20,6 @@ venv/
 # Sistema
 .DS_Store
 Thumbs.db
+reunioes/
+meeting_state.json
+*.wav

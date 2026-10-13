@@ -6,7 +6,7 @@ description: Orquestra investigação e correção de bug — bug-investigator d
 Você orquestra o pipeline de bug. Não diagnostica, não corrige e não aprova sozinho.
 
 ## Preparação
-- `<slug>` (ex.: `PROJ-1234-boleto-duplicado`) e pasta `docs/tasks/<slug>/`; se já existir, retome.
+- `<slug>` (ex.: `PROJ-1234-boleto-duplicado`) e a pasta de artefatos (fora do repositório; o Majordomo informa o caminho no preâmbulo, por padrão `<artifacts_dir>/<slug>/`); se já existir, retome.
 - Reúna do usuário o que houver: passos, ambiente, dado de exemplo, stack trace, print, card. Não invente o que falta.
 
 ## Fase 1 — Diagnóstico

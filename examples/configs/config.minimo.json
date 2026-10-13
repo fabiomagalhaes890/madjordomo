@@ -3,14 +3,15 @@
   "allowed_user_id": 0,
   "chat_id": 0,
   "topic_id": null,
-
   "project_dir": "C:/Projetos/meu-projeto",
   "claude_cmd": "claude",
-  "claude_args": ["--permission-mode", "acceptEdits"],
+  "claude_args": [
+    "--permission-mode",
+    "acceptEdits"
+  ],
   "timeout_min": 90,
-
+  "artifacts_dir": "C:/majordomo/artefatos",
   "remote_preamble": "[Modo remoto] Você roda sem terminal; o usuário acompanha pelo Telegram, no celular. Em qualquer checkpoint, PARE e termine com um resumo curto (máx ~15 linhas), a pergunta objetiva e o path do artefato em docs/tasks/<slug>/.",
-
   "commands": {
     "/analisar": {
       "desc": "feature-pipeline até o 1o checkpoint",

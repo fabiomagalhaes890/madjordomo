@@ -17,9 +17,14 @@ Comandos no Telegram:
   /aprovacao <PR>   pede aprovação do PR no canal do Slack
   /claude <texto>   pedido livre ao Claude (nova sessão)
   <texto normal>    continua a sessão atual (responder checkpoints/perguntas)
+  /threads          lista as threads abertas e a ativa
+  /ir <rótulo>      troca a thread ativa
+  /resp <rótulo> …  responde uma thread específica sem trocar a ativa
+  /ligar <ant> CARD vincula uma investigação sem-card ao card quando ele nascer
+  /uso [hoje|semana|mes]  consumo das tarefas (custo e tokens)
   /status           o que está rodando agora
   /parar            cancela a tarefa em andamento
-  /nova             esquece a sessão atual
+  /nova             encerra a thread ativa
   /ping             teste de vida
 """
 import base64
@@ -55,7 +60,11 @@ state_lock = threading.Lock()
 
 
 def load_state():
-    st = {"offset": 0, "session_id": None, "session_desc": None, "jira_seen": None}
+    st = {"offset": 0, "jira_seen": None,
+          "threads": {},        # rótulo -> {"session_id": ..., "label": ..., "updated": ...}
+          "active": None,       # rótulo da thread ativa
+          "inv_n": 0,           # contador de rótulos automáticos inv-N
+          "usage": {}}          # "YYYY-MM-DD" -> {"cost": float, "in": int, "out": int, "runs": int}
     if STATE_FILE.exists():
         st.update(json.loads(STATE_FILE.read_text(encoding="utf-8")))
     return st
@@ -867,14 +876,34 @@ def kill_tree(proc):
         proc.kill()
 
 
-def run_claude(prompt, new_session):
+def record_usage(data):
+    """Acumula custo e tokens da chamada no contador diário."""
+    try:
+        day = dt.datetime.now().astimezone().date().isoformat()
+        u = state.setdefault("usage", {}).setdefault(day, {"cost": 0.0, "in": 0, "out": 0, "runs": 0})
+        u["cost"] += float(data.get("total_cost_usd") or 0)
+        us = data.get("usage") or {}
+        u["in"] += int(us.get("input_tokens") or 0) + int(us.get("cache_read_input_tokens") or 0)
+        u["out"] += int(us.get("output_tokens") or 0)
+        u["runs"] += 1
+    except Exception as e:
+        print("Uso:", e)
+
+
+def run_claude(prompt, label, new_session):
     pre = CFG.get("remote_preamble", "")
+    adir = CFG.get("artifacts_dir")
+    if adir:
+        pre = (pre + " ").strip() + (
+            f" Salve TODOS os artefatos de trabalho (docs/tasks, relatórios, rascunhos .md) "
+            f"em {adir}/{label}/ — nunca dentro do repositório do projeto.")
     prompt = f"{pre}\n\n{prompt}" if pre else prompt
     args = [CLAUDE, "-p", prompt, "--output-format", "json"] + CFG.get("claude_args", [])
-    if not new_session and state.get("session_id"):
-        args += ["--resume", state["session_id"]]
+    th = state.setdefault("threads", {}).get(label, {})
+    if not new_session and th.get("session_id"):
+        args += ["--resume", th["session_id"]]
 
-    print("Executando:", CLAUDE, "| sessão:", state.get("session_id"))
+    print("Executando:", CLAUDE, "| thread:", label, "| sessão:", th.get("session_id"))
     proc = subprocess.Popen(
         args,
         cwd=CFG["project_dir"],
@@ -903,30 +932,35 @@ def run_claude(prompt, new_session):
     except json.JSONDecodeError:
         return out[-MAX_MSG:]
 
+    record_usage(data)
     if data.get("session_id"):
-        state["session_id"] = data["session_id"]
+        t = state.setdefault("threads", {}).setdefault(label, {"label": label})
+        t["session_id"] = data["session_id"]
+        t["updated"] = time.time()
         save_state()
     if data.get("is_error"):
         return f"❌ {data.get('result') or 'Erro sem descrição.'}"
     return data.get("result") or "(Claude terminou sem texto de resposta)"
 
 
-def start_job(desc, prompt, new_session, session_desc=None):
+def start_job(desc, prompt, label, new_session):
     with job_lock:
         if job["desc"]:
-            send(f"⏳ Ainda estou em: {job['desc']}\nUse /parar para cancelar.")
+            send(f"⏳ Ainda estou em: {job['desc']}\nUse /parar para cancelar (uma tarefa por vez).")
             return
         job.update(desc=desc, started=time.time(), cancelled=False, proc=None)
 
+    th = state.setdefault("threads", {})
     if new_session:
-        state["session_id"] = None
-        state["session_desc"] = session_desc or desc
-        save_state()
+        th[label] = {"label": label, "session_id": None, "updated": time.time()}
+    th.setdefault(label, {"label": label, "session_id": None, "updated": time.time()})
+    state["active"] = label
+    save_state()
 
     def worker():
         send(f"▶️ {desc}")
         try:
-            result = run_claude(prompt, new_session)
+            result = run_claude(prompt, label, new_session)
         except Exception as e:
             result = f"❌ Falha ao executar o Claude: {e}"
         with job_lock:
@@ -937,6 +971,73 @@ def start_job(desc, prompt, new_session, session_desc=None):
 
 
 # ---------------------------------------------------------------- comandos
+def find_thread(label):
+    """Acha o rótulo real de uma thread, ignorando maiúsc/minúsc. None se não existe."""
+    th = state.get("threads", {})
+    if label in th:
+        return label
+    low = label.lower()
+    for k in th:
+        if k.lower() == low:
+            return k
+    return None
+
+
+def fmt_usage(arg=""):
+    u = state.get("usage", {})
+    if not u:
+        return "Sem consumo registrado ainda."
+    now = dt.datetime.now().astimezone().date()
+    period = (arg or "hoje").strip().lower()
+    if period in ("semana", "7d"):
+        days = [(now - dt.timedelta(days=i)).isoformat() for i in range(7)]
+        titulo = "7 dias"
+    elif period in ("mes", "mês", "30d"):
+        days = [(now - dt.timedelta(days=i)).isoformat() for i in range(30)]
+        titulo = "30 dias"
+    else:
+        days = [now.isoformat()]
+        titulo = "hoje"
+    cost = sum(u.get(d, {}).get("cost", 0) for d in days)
+    tin = sum(u.get(d, {}).get("in", 0) for d in days)
+    tout = sum(u.get(d, {}).get("out", 0) for d in days)
+    runs = sum(u.get(d, {}).get("runs", 0) for d in days)
+    return (f"📊 Consumo ({titulo}):\n"
+            f"US$ {cost:.2f} · {runs} execuç{'ão' if runs == 1 else 'ões'}\n"
+            f"tokens: {tin/1000:.0f}k entrada · {tout/1000:.0f}k saída\n\n"
+            "Este é o gasto das tarefas do Majordomo, não o saldo da sua assinatura.")
+
+
+def thread_label(arg):
+    """Deriva o rótulo de uma thread a partir do argumento de um comando.
+    Card (PROJ-123) vira maiúsculo; nome livre vira slug; vazio gera inv-N."""
+    import re as _re
+    a = (arg or "").strip()
+    if not a:
+        state["inv_n"] = state.get("inv_n", 0) + 1
+        return f"inv-{state['inv_n']}", ""
+    first, _, rest = a.partition(" ")
+    # parece um card? (letras-digitos, ex. PROJ-123, DSR-6428)
+    if _re.fullmatch(r"[A-Za-z]{2,10}-\d{1,7}", first) or _re.fullmatch(r"[A-Za-z]{2,10}\d{2,7}", first):
+        return first.upper(), rest.strip()
+    # nome livre: slug do primeiro "token" significativo
+    slug = _re.sub(r"[^a-z0-9-]+", "-", first.lower()).strip("-")[:30] or f"t{int(time.time())%10000}"
+    return slug, rest.strip()
+
+
+def fmt_threads():
+    th = state.get("threads", {})
+    if not th:
+        return "Nenhuma thread aberta."
+    act = state.get("active")
+    rows = sorted(th.values(), key=lambda t: t.get("updated", 0), reverse=True)
+    out = []
+    for t in rows:
+        mark = "▶ " if t["label"] == act else "  "
+        out.append(f"{mark}{t['label']}")
+    return "🧵 Threads abertas:\n" + "\n".join(out) + "\n\nAtiva: " + (act or "nenhuma")
+
+
 def build_help():
     lines = []
     for name, c in CFG.get("commands", {}).items():
@@ -979,8 +1080,7 @@ def handle(msg):
             mins = int((time.time() - job["started"]) / 60)
             send(f"⏳ {job['desc']} — há {mins} min")
         else:
-            sess = state.get("session_desc") or "nenhuma"
-            send(f"💤 Livre. Sessão atual: {sess}")
+            send(f"💤 Livre. Thread ativa: {state.get('active') or 'nenhuma'}")
     elif cmd == "/parar":
         if job["proc"]:
             job["cancelled"] = True
@@ -988,9 +1088,12 @@ def handle(msg):
         else:
             send("Nada rodando.")
     elif cmd == "/nova":
-        state.update(session_id=None, session_desc=None)
+        act = state.get("active")
+        if act and act in state.get("threads", {}):
+            state["threads"].pop(act, None)
+        state["active"] = None
         save_state()
-        send("🧹 Sessão zerada.")
+        send(f"🧹 Thread {act or ''} encerrada." if act else "Nenhuma thread ativa.")
     elif cmd == "/tasks":
         if not TASKS:
             send("Jira/Azure DevOps não configurado no config.json.")
@@ -1064,34 +1167,71 @@ def handle(msg):
                 send(briefing())
         except Exception as e:
             send(f"❌ Erro no Google: {e}")
+    elif cmd == "/threads":
+        send(fmt_threads())
+    elif cmd == "/ir":
+        label = arg.strip()
+        if not label:
+            send("Uso: /ir <rótulo>  (veja /threads)")
+            return
+        key = find_thread(label)
+        if key:
+            state["active"] = key; save_state(); send(f"▶ Thread ativa: {key}")
+        else:
+            send(f"Não achei a thread '{label}'. Veja /threads.")
+    elif cmd == "/ligar":
+        old, _, new_label = arg.partition(" ")
+        old, new_label = old.strip(), new_label.strip()
+        th = state.get("threads", {})
+        src_key = find_thread(old)
+        if not src_key or not new_label:
+            send("Uso: /ligar <rótulo-antigo> <CARD>  (ex.: /ligar login-lento PROJ-457)")
+            return
+        new_key = new_label.upper()
+        th[new_key] = {**th.pop(src_key), "label": new_key}
+        if state.get("active") == src_key:
+            state["active"] = new_key
+        save_state()
+        send(f"🔗 Thread '{src_key}' agora é {new_key} (contexto mantido).")
+    elif cmd == "/resp":
+        label, _, body = arg.partition(" ")
+        key = find_thread(label.strip())
+        if not key or not body.strip():
+            send("Uso: /resp <rótulo> <texto>  (responde uma thread específica sem trocar a ativa)")
+            return
+        start_job(f"continuação de {key}", body.strip(), key, new_session=False)
+    elif cmd == "/uso":
+        send(fmt_usage(arg))
     elif cmd in CFG.get("commands", {}):
         c = CFG["commands"][cmd]
         new = c.get("new_session", False)
-        if c.get("needs_card"):
-            if not arg:
-                send(f"Uso: {cmd} DSR-123")
-                return
-            card, _, obs = arg.partition(" ")
-            card = card.upper()
+        if new:
+            # /analisar, /investigar etc.: aceita card OU nome livre OU nada (gera inv-N)
+            label, obs = thread_label(arg)
+            card = label
         else:
-            if not state.get("session_id"):
-                send("Não há card em andamento. Comece por um comando com card (ex.: /analisar DSR-123).")
+            # /ok, /corrigir, /pr: operam na thread ativa
+            label = state.get("active")
+            if not label:
+                send("Não há thread ativa. Comece com /analisar ou /investigar.")
                 return
-            card, obs = state.get("session_desc") or "", arg
+            card, obs = label, arg
         prompt = c["template"].format(card=card, obs=obs or "nenhuma")
-        start_job(f"{cmd[1:]} {card}".strip(), prompt, new, session_desc=card if new else None)
+        start_job(f"{cmd[1:]} {label}".strip(), prompt, label, new_session=new)
     elif cmd == "/claude":
         if not arg:
             send("Uso: /claude <pedido>")
             return
-        start_job(f"pedido: {arg[:40]}", arg, True)
+        label, _ = thread_label("")  # pedido livre abre thread própria
+        start_job(f"pedido: {arg[:40]}", arg, label, new_session=True)
     elif cmd.startswith("/"):
         send("Comando desconhecido. /ajuda")
     else:
-        if not state.get("session_id"):
-            send("Não há sessão ativa. Veja /ajuda.")
+        label = state.get("active")
+        if not label:
+            send("Não há thread ativa. Veja /ajuda ou comece com /analisar.")
             return
-        start_job(f"continuação de {state.get('session_desc')}", text, False)
+        start_job(f"continuação de {label}", text, label, new_session=False)
 
 
 # ---------------------------------------------------------------- loop

@@ -8,7 +8,7 @@ aprova sozinho — cada decisão de conteúdo é do agente responsável. Você c
 relay e decide quando avançar ou voltar.
 
 ## Preparação
-1. Defina o `<slug>` (ex.: `PROJ-1234-filtro-acordos`; sem card, derive da descrição) e a pasta `docs/tasks/<slug>/`. Se já existir com artefatos, **retome** da última etapa.
+1. Defina o `<slug>` (ex.: `PROJ-1234-filtro-acordos`; sem card, derive da descrição) e a pasta de artefatos (fora do repositório; o Majordomo informa o caminho no preâmbulo, por padrão `<artifacts_dir>/<slug>/`). Se já existir com artefatos, **retome** da última etapa.
 2. Identifique os módulos envolvidos. Se não der para identificar com confiança, pergunte.
 3. Toda chamada de agente recebe: `<slug>`, caminho da pasta, o pedido original e os **paths dos artefatos anteriores** (o agente lê o arquivo — não resuma o conteúdo de outro agente).
 

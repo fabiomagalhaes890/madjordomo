@@ -22,6 +22,10 @@
   // "claude_args": ["--force"],
   "timeout_min": 90,
 
+  // Pasta FORA do repositório onde o agente grava os artefatos do pipeline
+  // (docs/tasks, relatórios .md). Evita poluir o projeto. Um subdiretório por thread.
+  "artifacts_dir": "C:/majordomo/artefatos",
+
   // ---------- Tarefas: use UM dos dois (Jira OU Azure DevOps)
 
   // Jira Cloud (para Server/Data Center troque email+api_token por "pat")
@@ -84,6 +88,16 @@
   //   "briefing_hour": 8,
   //   "teams": true,
   //   "teams_poll_min": 2
+  // },
+
+  // ---------- Reunião (meeting_watch.py): grava o áudio do sistema, transcreve local e resume
+  // Requer: pip install faster-whisper soundcard numpy
+  // "meeting": {
+  //   "model": "medium",            // tiny|base|small|medium|large-v3 (pt: medium+ recomendado)
+  //   "device": "auto",            // auto|cpu|cuda
+  //   "language": "pt",
+  //   "out_dir": "C:/majordomo/reunioes",
+  //   "summarize": true             // false = só transcrição, sem gastar token
   // },
 
   // ---------- Slack (só se o workspace permitir instalar app; senão use e-mail de notificação)

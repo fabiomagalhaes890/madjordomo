@@ -39,6 +39,7 @@ ficar alternando entre janelas.
   - [Microsoft 365 (Outlook, Agenda e Teams)](#microsoft-365-outlook-agenda-e-teams)
   - [Slack](#slack)
   - [Vigia de navegador (Teams/Slack sem app)](#vigia-de-navegador-teamsslack-sem-app)
+- [Resumo de reuniões (Whisper local)](#resumo-de-reuniões-whisper-local)
 - [Rodar como serviço (Windows)](#rodar-como-serviço-windows)
 - [Vários projetos](#vários-projetos)
 - [Segurança e privacidade](#segurança-e-privacidade)
@@ -150,6 +151,7 @@ Campos principais:
 | `claude_cmd` / `claude_args` | Claude: `"claude"` + `["--permission-mode","acceptEdits"]`. Cursor: `"agent"` + `["--force"]`. |
 | `timeout_min` | Limite por tarefa. Pipelines completos: 90. |
 | `remote_preamble` | Texto injetado em toda chamada: avisa o agente que você está no celular e pede resumos curtos nos checkpoints. |
+| `artifacts_dir` | Pasta **fora do repositório** onde os pipelines gravam os `.md` de trabalho (um subdiretório por thread). Evita poluir o projeto. |
 | `commands` | Seus comandos de trabalho. Veja [Comandos](#comandos). |
 
 ---
@@ -211,10 +213,15 @@ Comandos de controle (fixos):
 | Comando | O que faz |
 |---|---|
 | `/claude <texto>` | Pedido livre ao agente (nova sessão). |
-| `<texto normal>` | Continua a sessão atual (responder perguntas/checkpoints). |
+| `<texto normal>` | Continua a **thread ativa** (responder perguntas/checkpoints). |
+| `/threads` | Lista as threads abertas e qual está ativa. |
+| `/ir <rótulo>` | Troca a thread ativa. |
+| `/resp <rótulo> <texto>` | Responde uma thread específica sem trocar a ativa. |
+| `/ligar <antigo> <CARD>` | Vincula uma investigação sem-card ao card quando ele for criado. |
+| `/uso [hoje\|semana\|mes]` | Consumo das tarefas (custo e tokens). |
 | `/status` | O que está rodando agora. |
 | `/parar` | Cancela a tarefa em andamento. |
-| `/nova` | Esquece a sessão atual. |
+| `/nova` | Encerra a thread ativa. |
 | `/ping`, `/ajuda` | Teste de vida e lista de comandos. |
 
 Comandos dos vigias (quando configurados):
@@ -235,6 +242,23 @@ O conjunto de comandos de trabalho do exemplo (`config.example.json`) é:
 - `/ok [obs]` — aprova o checkpoint e segue o pipeline.
 - `/corrigir [obs]` — depois do `/investigar`, segue para o fix.
 - `/pr [obs]` — depois que **você revisou o diff**: commit, push, abre o PR (sem merge) e move o card.
+
+### Threads: vários itens em paralelo
+
+Cada trabalho em andamento é uma **thread** com um rótulo e a sua própria sessão de IA — então
+você alterna entre itens sem perder o contexto de nenhum.
+
+- O rótulo pode ser um **card** (`/analisar PROJ-123`), um **nome livre** (`/investigar
+  login-lento`) ou **nada** — aí o Majordomo gera um `inv-1`, `inv-2`… Útil para começar uma
+  investigação **antes de existir o card**.
+- `/threads` mostra o que está aberto; `/ir <rótulo>` troca a ativa; texto normal vai para a ativa.
+- Criou o card depois? `/ligar login-lento PROJ-457` renomeia a thread para o card, **mantendo
+  todo o histórico** da investigação.
+- `/resp <rótulo> <texto>` responde uma thread específica sem trocar a ativa.
+
+> O Majordomo roda **uma tarefa por vez** (se você disparar outra com uma em andamento, ele
+> avisa). As threads guardam o contexto de cada item; elas não rodam duas execuções no mesmo
+> instante.
 
 ---
 
@@ -326,6 +350,10 @@ Cada vigia é opcional e ligado pelo seu bloco no `config.json`. Todos usam APIs
 o vigia de navegador). As ações que mandam algo em seu nome (responder, pedir aprovação) sempre
 passam por um comando seu.
 
+> **Vigias não gastam token de IA.** Eles falam direto com as APIs dos serviços (ou leem a tela,
+> no caso do navegador). Monitorar Jira, e-mail, chat etc. o dia todo tem custo zero de IA — o
+> consumo vem apenas das tarefas do agente. Acompanhe com `/uso`.
+
 ### Jira / Azure DevOps
 
 Use **um** dos dois para `/tasks` e o aviso de card novo.
@@ -403,6 +431,57 @@ python browser_watch.py --headless   # depois, sem janela
 
 ---
 
+## Resumo de reuniões (Whisper local)
+
+O `meeting_watch.py` grava o **áudio do sistema** durante a reunião (o que você ouve), transcreve
+**localmente** com [faster-whisper](https://github.com/SYSTRAN/faster-whisper) e pede ao agente um
+resumo, que chega no Telegram. **Nada de áudio sai da máquina** — a transcrição é toda local.
+
+Funciona em qualquer plataforma (Meet, Teams, Zoom, telefone no viva-voz), porque capta o som que
+sai do computador, não a plataforma.
+
+```bash
+python -m pip install faster-whisper soundcard numpy
+```
+
+Config (bloco `meeting` no `config.json`):
+
+```jsonc
+"meeting": {
+  "model": "medium",            // tiny|base|small|medium|large-v3 — pt: medium ou maior
+  "device": "auto",            // auto|cpu|cuda
+  "language": "pt",
+  "out_dir": "C:/majordomo/reunioes",
+  "summarize": true             // false = só transcrição, sem gastar token
+}
+```
+
+Uso pelo Telegram (rode `python meeting_watch.py --serve`, ou junte ao Agendador):
+
+| Comando | O que faz |
+|---|---|
+| `/gravar [rótulo]` | Começa a gravar o áudio do sistema. |
+| `/parar` | Para, transcreve e envia o resumo (assunto, decisões, pendências, o que pediram a você, próximos passos). |
+| `/status_reuniao` | Diz se está gravando e há quanto tempo. |
+
+Ou pela linha de comando: `python meeting_watch.py start`, depois `Ctrl+C` para encerrar; ou
+`python meeting_watch.py file reuniao.wav` para processar um áudio já gravado.
+
+**Captura de áudio (loopback).** Usa a biblioteca `soundcard` para gravar o *loopback* do
+alto-falante (o som que sai do PC). No Windows e no Linux costuma funcionar direto. Se a gravação
+sair muda, confira o dispositivo de saída selecionado e, no Windows, que o "Stereo Mix" ou
+equivalente não está desabilitado.
+
+**Desempenho.** Com GPU NVIDIA (`device: "cuda"`) a transcrição roda muitas vezes mais rápido que
+o tempo real; na CPU funciona, mas é bem mais lento. O modelo `medium` é um bom equilíbrio para
+português; `large-v3` é mais preciso e mais pesado. Esse módulo precisa de `pip install`, então só
+roda nos seus computadores próprios.
+
+**Privacidade e consentimento.** Gravar uma conversa da qual você participa costuma ser aceito,
+mas contrato, NDA ou política do cliente podem exigir aviso aos participantes. Avise que está
+transcrevendo para suas anotações. Não é aconselhamento jurídico — confira as regras de cada
+cliente. Áudios e transcrições ficam só na sua máquina (e no `.gitignore`).
+
 ## Rodar como serviço (Windows)
 
 Use o **Agendador de Tarefas** (Criar Tarefa, não a básica):
@@ -471,16 +550,20 @@ Este projeto automatiza o seu próprio trabalho usando as suas credenciais. **An
 qualquer cliente ou empregador**, confirme que a automação, a leitura de chats e o tráfego de
 informações para fora do ambiente estão de acordo com o contrato, a política de uso e a
 legislação aplicável. O autor não se responsabiliza pelo uso indevido. Nenhuma linha deste
-repositório contém dados de clientes — todos os exemplos são genéricos.
+repositório contém dados de clientes — todos os exemplos são genéricos. Licenciado sob AGPL-3.0.
 
 ---
 
 ## Apoie o projeto
 
 O Majordomo é gratuito e open source. Se ele te economiza tempo, considere apoiar pelo
-[GitHub Sponsors](https://github.com/sponsors/fabiomagalhaes890) — ajuda a manter o
+[GitHub Sponsors](https://github.com/sponsors/SEU_USUARIO) — ajuda a manter o
 desenvolvimento, a documentação e o site.
 
 ## Licença
 
-MIT. Veja [LICENSE](LICENSE).
+**AGPL-3.0.** O Majordomo é livre e de código aberto — você pode usar, estudar, modificar e
+distribuir. A AGPL acrescenta uma garantia: quem usar este código (inclusive modificado) num
+produto ou serviço acessível pela rede precisa **disponibilizar o código-fonte** dessas
+modificações sob a mesma licença. Na prática, isso mantém o projeto aberto e impede que alguém
+o feche para revender. Veja [LICENSE](LICENSE).
