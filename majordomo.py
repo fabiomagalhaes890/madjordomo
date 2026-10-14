@@ -79,6 +79,11 @@ def save_state():
 
 
 # ---------------------------------------------------------------- telegram
+# ---------------------------------------------------------------- canal
+import channels as _channels
+CHANNEL = None  # criado em main(), depois que state existe
+
+
 def tg(method, **params):
     data = json.dumps(params).encode("utf-8")
     req = urllib.request.Request(
@@ -89,18 +94,18 @@ def tg(method, **params):
 
 
 def send(text, chat_id=None, thread_id=None):
-    chat_id = chat_id or CFG["chat_id"]
-    if thread_id is None:
-        thread_id = CFG.get("topic_id")
-    text = text or "(sem resposta)"
-    for i in range(0, len(text), MAX_MSG):
-        params = {"chat_id": chat_id, "text": text[i : i + MAX_MSG]}
-        if thread_id:
-            params["message_thread_id"] = thread_id
-        try:
-            tg("sendMessage", **params)
-        except Exception as e:
-            print("Erro ao enviar mensagem:", e)
+    """Envia pelo canal configurado (telegram direto, ou github/notion intermediário)."""
+    if CHANNEL is not None:
+        CHANNEL.send(text or "(sem resposta)")
+        return
+    # fallback (antes de main criar o canal): tenta telegram direto
+    try:
+        params = {"chat_id": CFG["chat_id"], "text": (text or "")[:MAX_MSG]}
+        if CFG.get("topic_id"):
+            params["message_thread_id"] = CFG["topic_id"]
+        tg("sendMessage", **params)
+    except Exception as e:
+        print("Erro ao enviar mensagem:", e)
 
 
 # ---------------------------------------------------------------- jira
@@ -1236,7 +1241,9 @@ def handle(msg):
 
 # ---------------------------------------------------------------- loop
 def main():
-    print("Majordomo rodando. Para sair, feche a janela.")
+    global CHANNEL
+    CHANNEL = _channels.make_channel(CFG, state, save_state)
+    print(f"Majordomo rodando (canal: {CFG.get('channel', 'telegram')}). Para sair, feche a janela.")
     if CFG.get("allowed_user_id"):
         send("🟢 Majordomo online.")
         if TASKS.get("poll_min"):
@@ -1254,12 +1261,16 @@ def main():
                 threading.Thread(target=teams_watcher, daemon=True).start()
     while True:
         try:
-            r = tg("getUpdates", offset=state["offset"], timeout=25, allowed_updates=["message"])
-            for u in r.get("result", []):
-                state["offset"] = u["update_id"] + 1
-                save_state()
-                if "message" in u:
-                    handle(u["message"])
+            for text, meta in CHANNEL.poll():
+                # monta uma "mensagem" no formato que handle() espera
+                handle({"from": {"id": CFG["allowed_user_id"]},
+                        "chat": {"id": CFG.get("chat_id")},
+                        "message_thread_id": CFG.get("topic_id"),
+                        "text": text})
+                CHANNEL.ack(meta)
+            # canais intermediários não têm long-poll: aguarda um pouco entre ciclos
+            if CFG.get("channel", "telegram") != "telegram":
+                time.sleep(CFG.get("poll_sec", 15))
         except KeyboardInterrupt:
             if job["proc"]:
                 kill_tree(job["proc"])

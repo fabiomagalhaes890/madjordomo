@@ -26,6 +26,7 @@ ficar alternando entre janelas.
 - [Como funciona](#como-funciona)
 - [Arquitetura](#arquitetura)
 - [Instalação rápida](#instalação-rápida)
+- [Canais: quando o Telegram é bloqueado](#canais-quando-o-telegram-é-bloqueado)
 - [Passo a passo: bot do Telegram](#passo-a-passo-bot-do-telegram)
 - [O arquivo config.json](#o-arquivo-configjson)
 - [Permissões do agente](#permissões-do-agente)
@@ -110,6 +111,47 @@ Na primeira execução, com `allowed_user_id` ainda em `0`, o bot entra em **mod
 e responde com os IDs que você precisa preencher.
 
 ---
+
+## Canais: quando o Telegram é bloqueado
+
+O Telegram é sempre o **ponto central** onde você lê e responde. Mas algumas máquinas de cliente
+bloqueiam o Telegram (proxy que inspeciona HTTPS, firewall). Para esses casos, o Majordomo pode
+usar um **intermediário** que a máquina *consiga* acessar, e uma **ponte** num computador seu
+repassa tudo para o seu Telegram.
+
+```
+PC com acesso:   Majordomo ──▶ Telegram            (channel: "telegram")
+
+PC bloqueado:    Majordomo ──▶ GitHub/Notion ──▶ ponte ──▶ seu Telegram
+                           ◀──               ◀──      ◀── (suas respostas)
+```
+
+Escolha o canal no `config.json` da máquina:
+
+| `channel` | Quando usar |
+|---|---|
+| `telegram` | Padrão. A máquina alcança o Telegram. |
+| `github` | A máquina bloqueia o Telegram mas **acessa Git/GitHub** (o caso mais comum em cliente). Grava recados num repo privado. |
+| `notion` | A máquina alcança o Notion. Usa um database como caixa de mensagens. |
+
+**Montando o canal GitHub (recomendado para cliente):**
+
+1. Crie um **repositório privado** só para os recados (ex.: `voce/majordomo-recados`).
+2. Gere um **PAT** com escopo `repo`.
+3. No `config.json` da máquina bloqueada: `"channel": "github"` + o bloco `github_channel`.
+4. Numa máquina **sua com Telegram**, configure o bloco `bridge` (mesmo repositório) e rode:
+   ```bash
+   python bridge.py
+   ```
+
+A ponte lê o `outbox` do repo e manda para o seu Telegram; o que você responde no Telegram ela
+grava no `inbox`, e o Majordomo bloqueado lê de lá. O Notion funciona igual, trocando o
+intermediário por um database com as propriedades `Texto` (title), `Direcao` (select: out/in) e
+`Lida` (checkbox).
+
+> Como são caixas de mensagens em arquivo, os canais intermediários têm uma pequena latência (o
+> `poll_sec`, por padrão 15s) — não é instantâneo como o Telegram direto, mas resolve o bloqueio.
+> E, como sempre: confirme que usar um intermediário está de acordo com a política do cliente.
 
 ## Passo a passo: bot do Telegram
 

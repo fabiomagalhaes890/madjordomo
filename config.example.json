@@ -12,6 +12,34 @@
   "chat_id": 0,
   "topic_id": null,
 
+  // ---------- Canal: por onde você conversa com o Majordomo
+  // "telegram" (padrão, direto) | "github" | "notion" (intermediários, p/ máquinas que bloqueiam o Telegram)
+  "channel": "telegram",
+  // "poll_sec": 15,   // intervalo de checagem dos canais intermediários
+
+  // Intermediário GitHub: grava recados num repo privado; a ponte (bridge.py) repassa ao seu Telegram
+  // "github_channel": {
+  //   "repo": "seu-usuario/majordomo-recados",
+  //   "token": "PAT_COM_ESCOPO_repo",
+  //   "branch": "main"
+  // },
+
+  // Intermediário Notion: usa um database com props Texto(title), Direcao(select out/in), Lida(checkbox)
+  // "notion_channel": {
+  //   "token": "secret_...",
+  //   "database_id": "..."
+  // },
+
+  // Ponte (rode bridge.py numa máquina SUA com Telegram; mesmo intermediário dos dois lados)
+  // "bridge": {
+  //   "intermediary": "github",
+  //   "telegram_token": "TOKEN_DO_BOT_DA_PONTE",
+  //   "allowed_user_id": 0,
+  //   "chat_id": 0,
+  //   "topic_id": null,
+  //   "poll_sec": 15
+  // },
+
   // ---------- Agente de IA (obrigatório)
   "project_dir": "C:/WORK/CLIENTE/workspace",
   // Claude Code:
@@ -109,7 +137,7 @@
   // },
 
   // ---------- Comportamento do agente (ajuste por cliente)
-  "remote_preamble": "[Modo remoto] Você está rodando sem terminal; o Fabio acompanha e responde pelo Telegram, no celular. Sempre que um pipeline pedir checkpoint ou confirmação do usuário, PARE ali e termine a resposta com: resumo curto (no máximo ~15 linhas), a pergunta objetiva que precisa de resposta e o path do artefato em docs/tasks/<slug>/ com o detalhe completo. O usuário vai responder em uma próxima mensagem desta mesma sessão. Nunca inclua na resposta dados pessoais de alunos ou responsáveis (nome, CPF, e-mail, telefone, valores de um caso específico).",
+  "remote_preamble": "[Modo remoto] Você está rodando sem terminal; o usuário acompanha e responde pelo Telegram, no celular. Sempre que um pipeline pedir checkpoint ou confirmação do usuário, PARE ali e termine a resposta com: resumo curto (no máximo ~15 linhas), a pergunta objetiva que precisa de resposta e o path do artefato na pasta de artefatos com o detalhe completo. O usuário vai responder em uma próxima mensagem desta mesma sessão. Nunca inclua na resposta dados pessoais sensíveis (nome, CPF, e-mail, telefone, valores de um caso específico).",
 
   // Comandos de trabalho: {card} = id do card/work item, {obs} = texto extra.
   // Ajuste os templates para os nomes das suas skills/personas.
@@ -118,37 +146,37 @@
       "desc": "feature-pipeline até o checkpoint da Fase 1",
       "needs_card": true,
       "new_session": true,
-      "template": "Rode a skill feature-pipeline para o card {card}. Observações do Fabio: {obs}."
+      "template": "Rode a skill feature-pipeline para o card {card}. Observações do usuário: {obs}."
     },
     "/investigar": {
       "desc": "bugfix-pipeline só até o diagnóstico (sem fix)",
       "needs_card": true,
       "new_session": true,
-      "template": "Rode a skill bugfix-pipeline para o card {card}, executando apenas a investigação (bug-investigator) e parando no checkpoint do diagnóstico. Não corrija nada. Observações do Fabio: {obs}."
+      "template": "Rode a skill bugfix-pipeline para o card {card}, executando apenas a investigação (bug-investigator) e parando no checkpoint do diagnóstico. Não corrija nada. Observações do usuário: {obs}."
     },
     "/portar": {
       "desc": "legacy-parity-pipeline até o diagnóstico do legado",
       "needs_card": true,
       "new_session": true,
-      "template": "Rode a skill legacy-parity-pipeline para o card {card}. Observações do Fabio: {obs}."
+      "template": "Rode a skill legacy-parity-pipeline para o card {card}. Observações do usuário: {obs}."
     },
     "/ok": {
       "desc": "aprova o checkpoint e segue o pipeline",
       "needs_card": false,
       "new_session": false,
-      "template": "Aprovado. Siga para a próxima fase do pipeline do card {card}. Observações do Fabio: {obs}."
+      "template": "Aprovado. Siga para a próxima fase do pipeline do card {card}. Observações do usuário: {obs}."
     },
     "/corrigir": {
       "desc": "após /investigar, segue para o fix",
       "needs_card": false,
       "new_session": false,
-      "template": "Diagnóstico do card {card} aprovado. Siga o bugfix-pipeline a partir da correção (dev-senior, dev-reviewer). Observações do Fabio: {obs}."
+      "template": "Diagnóstico do card {card} aprovado. Siga o bugfix-pipeline a partir da correção (dev-senior, dev-reviewer). Observações do usuário: {obs}."
     },
     "/pr": {
       "desc": "commit, push, PR e move o card (após você revisar o diff)",
       "needs_card": false,
       "new_session": false,
-      "template": "O Fabio revisou o diff do card {card} e autorizou a entrega. Agora (e só por esta autorização explícita) crie uma branch com o nome do card se ainda não existir, faça commit com mensagem no padrão do projeto, push, abra o pull request sem merge e mova o card no Jira para a coluna de revisão/code review. Responda com o link do PR. Observações do Fabio: {obs}."
+      "template": "O usuário revisou o diff do card {card} e autorizou a entrega. Agora (e só por esta autorização explícita) crie uma branch com o nome do card se ainda não existir, faça commit com mensagem no padrão do projeto, push, abra o pull request sem merge e mova o card no Jira para a coluna de revisão/code review. Responda com o link do PR. Observações do usuário: {obs}."
     }
   }
 }

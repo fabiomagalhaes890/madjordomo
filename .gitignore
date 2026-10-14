@@ -23,3 +23,4 @@ Thumbs.db
 reunioes/
 meeting_state.json
 *.wav
+bridge_state.json
