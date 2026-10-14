@@ -131,8 +131,9 @@ Escolha o canal no `config.json` da máquina:
 | `channel` | Quando usar |
 |---|---|
 | `telegram` | Padrão. A máquina alcança o Telegram. |
-| `github` | A máquina bloqueia o Telegram mas **acessa Git/GitHub** (o caso mais comum em cliente). Grava recados num repo privado. |
-| `notion` | A máquina alcança o Notion. Usa um database como caixa de mensagens. |
+| `github` | A máquina bloqueia o Telegram mas **acessa GitHub**. Grava recados num repo privado. |
+| `gitlab` | Idem, usando a API do **GitLab** (self-hosted ou gitlab.com). |
+| `notion` | A máquina alcança o **Notion**. Usa um database como caixa de mensagens. |
 
 **Montando o canal GitHub (recomendado para cliente):**
 
@@ -144,10 +145,27 @@ Escolha o canal no `config.json` da máquina:
    python bridge.py
    ```
 
-A ponte lê o `outbox` do repo e manda para o seu Telegram; o que você responde no Telegram ela
-grava no `inbox`, e o Majordomo bloqueado lê de lá. O Notion funciona igual, trocando o
-intermediário por um database com as propriedades `Texto` (title), `Direcao` (select: out/in) e
-`Lida` (checkbox).
+A ponte lê os recados e manda para o seu Telegram; o que você responde ela grava de volta, e o
+Majordomo bloqueado lê de lá. GitLab e Notion funcionam igual (no Notion, um database com as
+propriedades `Texto` (title), `Direcao` (select out/in), `No` (rich_text) e `Lida` (checkbox)).
+
+**Vários PCs bloqueados.** Cada máquina recebe um `"node"` (nome livre, ex.: `node-1`) e usa seus
+próprios arquivos/registros no mesmo intermediário, sem se misturar. No `bridge`, você lista os
+nós e associa cada um a um **tópico do grupo**:
+
+```jsonc
+"bridge": {
+  "intermediary": "github",
+  "telegram_token": "...", "allowed_user_id": 0, "chat_id": 0,
+  "nodes": [
+    { "node": "node-1", "topic_id": 11 },
+    { "node": "node-2", "topic_id": 12 }
+  ]
+}
+```
+
+Uma só ponte atende todos os nós: cada PC aparece no seu tópico, e você responde no tópico certo
+para falar com aquele PC.
 
 > Como são caixas de mensagens em arquivo, os canais intermediários têm uma pequena latência (o
 > `poll_sec`, por padrão 15s) — não é instantâneo como o Telegram direto, mas resolve o bloqueio.

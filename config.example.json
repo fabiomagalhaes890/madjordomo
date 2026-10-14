@@ -13,8 +13,9 @@
   "topic_id": null,
 
   // ---------- Canal: por onde você conversa com o Majordomo
-  // "telegram" (padrão, direto) | "github" | "notion" (intermediários, p/ máquinas que bloqueiam o Telegram)
+  // "telegram" (padrão, direto) | "github" | "gitlab" | "notion" (intermediários)
   "channel": "telegram",
+  // "node": "node-1",   // nome deste PC quando usa intermediário (separa dos outros PCs)
   // "poll_sec": 15,   // intervalo de checagem dos canais intermediários
 
   // Intermediário GitHub: grava recados num repo privado; a ponte (bridge.py) repassa ao seu Telegram
@@ -24,20 +25,32 @@
   //   "branch": "main"
   // },
 
-  // Intermediário Notion: usa um database com props Texto(title), Direcao(select out/in), Lida(checkbox)
+  // Intermediário GitLab: igual ao GitHub, na API do GitLab (token escopo api)
+  // "gitlab_channel": {
+  //   "base_url": "https://gitlab.suaempresa.com",
+  //   "project": "grupo/majordomo-recados",
+  //   "token": "SEU_PAT",
+  //   "branch": "main"
+  // },
+
+  // Intermediário Notion: database com props Texto(title), Direcao(select out/in), No(rich_text), Lida(checkbox)
   // "notion_channel": {
   //   "token": "secret_...",
   //   "database_id": "..."
   // },
 
-  // Ponte (rode bridge.py numa máquina SUA com Telegram; mesmo intermediário dos dois lados)
+  // Ponte (rode bridge.py numa máquina SUA com Telegram; mesmo intermediário e repo/db dos nós)
+  // Um tópico do grupo por PC bloqueado; a ponte roteia cada nó para o seu tópico.
   // "bridge": {
-  //   "intermediary": "github",
+  //   "intermediary": "github",            // "github" | "gitlab" | "notion"
   //   "telegram_token": "TOKEN_DO_BOT_DA_PONTE",
   //   "allowed_user_id": 0,
   //   "chat_id": 0,
-  //   "topic_id": null,
-  //   "poll_sec": 15
+  //   "poll_sec": 15,
+  //   "nodes": [
+  //     { "node": "node-1", "topic_id": 11 },
+  //     { "node": "node-2", "topic_id": 12 }
+  //   ]
   // },
 
   // ---------- Agente de IA (obrigatório)

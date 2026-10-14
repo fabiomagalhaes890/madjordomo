@@ -36,6 +36,8 @@ def make_channel(cfg, state, save_state):
         return TelegramChannel(cfg, state, save_state)
     if kind == "github":
         return GitHubChannel(cfg, state, save_state)
+    if kind == "gitlab":
+        return GitLabChannel(cfg, state, save_state)
     if kind == "notion":
         return NotionChannel(cfg, state, save_state)
     raise ValueError(f"channel desconhecido: {kind}")
@@ -109,8 +111,9 @@ class GitHubChannel:
         self.repo = c["repo"]                      # "usuario/repo"
         self.token = c["token"]                    # PAT com escopo repo
         self.branch = c.get("branch", "main")
-        self.outbox = c.get("outbox", "outbox.jsonl")   # Majordomo -> usuário
-        self.inbox = c.get("inbox", "inbox.jsonl")      # usuário -> Majordomo
+        node = cfg.get("node", "default")          # separa arquivos por PC
+        self.outbox = f"nodes/{node}/outbox.jsonl"  # Majordomo -> usuário
+        self.inbox = f"nodes/{node}/inbox.jsonl"    # usuário -> Majordomo
         self.state = state
         self.save_state = save_state
         self.base = f"https://api.github.com/repos/{self.repo}/contents"
@@ -193,6 +196,61 @@ class GitHubChannel:
         pass  # o "seen" já serve de ack
 
 
+
+
+# ======================================================================
+# GitLab — intermediário via Repository Files API (mesmo esquema do GitHub)
+# ======================================================================
+class GitLabChannel(GitHubChannel):
+    """Igual ao GitHubChannel (outbox/inbox jsonl por nó), usando a API do GitLab.
+    Requer token com escopo api. base_url = o GitLab da empresa ou https://gitlab.com."""
+
+    def __init__(self, cfg, state, save_state):
+        c = cfg["gitlab_channel"]
+        self.base_url = c.get("base_url", "https://gitlab.com").rstrip("/")
+        self.project = urllib.parse.quote_plus(c["project"])   # "grupo/repo" -> encoded
+        self.token = c["token"]
+        self.branch = c.get("branch", "main")
+        node = cfg.get("node", "default")
+        self.outbox = f"nodes/{node}/outbox.jsonl"
+        self.inbox = f"nodes/{node}/inbox.jsonl"
+        self.state = state
+        self.save_state = save_state
+
+    def _api(self, path):
+        return f"{self.base_url}/api/v4/projects/{self.project}/repository/files/{urllib.parse.quote_plus(path)}"
+
+    def _get(self, path):
+        import base64
+        url = self._api(path) + f"?ref={self.branch}"
+        req = urllib.request.Request(url, headers={"PRIVATE-TOKEN": self.token})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                d = json.loads(r.read())
+            return base64.b64decode(d.get("content", "")).decode("utf-8", "replace"), True
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return "", False
+            raise
+
+    def _put(self, path, content, exists, msg):
+        import base64
+        body = {"branch": self.branch, "commit_message": msg,
+                "encoding": "base64",
+                "content": base64.b64encode(content.encode("utf-8")).decode()}
+        method = "PUT" if exists else "POST"
+        req = urllib.request.Request(self._api(path), data=json.dumps(body).encode(),
+                                     method=method, headers={"PRIVATE-TOKEN": self.token,
+                                                             "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+
+    def _append_line(self, path, obj, msg):
+        content, exists = self._get(path)
+        content = content + json.dumps(obj, ensure_ascii=False) + "\n"
+        self._put(path, content, exists, msg)
+
+
 # ======================================================================
 # Notion — intermediário via base de dados (uma página por mensagem)
 # ======================================================================
@@ -204,6 +262,7 @@ class NotionChannel:
         c = cfg["notion_channel"]
         self.token = c["token"]            # integration token (secret_...)
         self.db = c["database_id"]
+        self.node = cfg.get("node", "default")   # separa mensagens por PC
         self.state = state
         self.save_state = save_state
         self.h = {"Authorization": f"Bearer {self.token}",
@@ -222,6 +281,7 @@ class NotionChannel:
                 "properties": {
                     "Texto": {"title": [{"text": {"content": (text or "")[:1900]}}]},
                     "Direcao": {"select": {"name": "out"}},
+                    "No": {"rich_text": [{"text": {"content": self.node}}]},
                     "Lida": {"checkbox": False}}}
         try:
             self._req("POST", "https://api.notion.com/v1/pages", body)
@@ -232,6 +292,7 @@ class NotionChannel:
         out = []
         body = {"filter": {"and": [
             {"property": "Direcao", "select": {"equals": "in"}},
+            {"property": "No", "rich_text": {"equals": self.node}},
             {"property": "Lida", "checkbox": {"equals": False}}]}}
         try:
             res = self._req("POST", f"https://api.notion.com/v1/databases/{self.db}/query", body)
