@@ -42,15 +42,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import channels as _channels
+
 BASE = Path(__file__).resolve().parent
-def load_config():
-    """Lê o config.json aceitando linhas comentadas com // (para ligar/desligar blocos)."""
-    raw = (BASE / "config.json").read_text(encoding="utf-8")
-    lines = [ln for ln in raw.splitlines() if not ln.lstrip().startswith("//")]
-    return json.loads("\n".join(lines))
-
-
-CFG = load_config()
+CFG = _channels.load_config(BASE / "config.json")
+DIRECT_TELEGRAM = (CFG.get("channel") or "telegram").lower() == "telegram"
 STATE_FILE = BASE / "state.json"
 API = f"https://api.telegram.org/bot{CFG['telegram_token']}"
 MAX_MSG = 3900  # limite do Telegram é 4096
@@ -80,7 +76,6 @@ def save_state():
 
 # ---------------------------------------------------------------- telegram
 # ---------------------------------------------------------------- canal
-import channels as _channels
 CHANNEL = None  # criado em main(), depois que state existe
 
 
@@ -1058,16 +1053,18 @@ def handle(msg):
     thread = msg.get("message_thread_id")
     text = (msg.get("text") or "").strip()
 
-    # Modo configuração: responde com os IDs para você preencher o config.json
-    if not CFG.get("allowed_user_id"):
-        send(f"Modo configuração\nuser_id: {user}\nchat_id: {chat}\ntopic_id: {thread}", chat, thread)
-        return
+    # Canais intermediários: quem filtra o usuário é a ponte (bridge.py); IDs do Telegram não se aplicam aqui
+    if DIRECT_TELEGRAM:
+        # Modo configuração: responde com os IDs para você preencher o config.json
+        if not CFG.get("allowed_user_id"):
+            send(f"Modo configuração\nuser_id: {user}\nchat_id: {chat}\ntopic_id: {thread}", chat, thread)
+            return
 
-    # Segurança: só você, só no grupo/tópico configurado
-    if user != CFG["allowed_user_id"] or chat != CFG["chat_id"]:
-        return
-    if CFG.get("topic_id") and thread != CFG["topic_id"]:
-        return
+        # Segurança: só você, só no grupo/tópico configurado
+        if user != CFG["allowed_user_id"] or chat != CFG["chat_id"]:
+            return
+        if CFG.get("topic_id") and thread != CFG["topic_id"]:
+            return
     if not text:
         return
 
@@ -1244,7 +1241,7 @@ def main():
     global CHANNEL
     CHANNEL = _channels.make_channel(CFG, state, save_state)
     print(f"Majordomo rodando (canal: {CFG.get('channel', 'telegram')}). Para sair, feche a janela.")
-    if CFG.get("allowed_user_id"):
+    if CFG.get("allowed_user_id") or not DIRECT_TELEGRAM:
         send("🟢 Majordomo online.")
         if TASKS.get("poll_min"):
             threading.Thread(target=tasks_poller, daemon=True).start()
@@ -1263,7 +1260,7 @@ def main():
         try:
             for text, meta in CHANNEL.poll():
                 # monta uma "mensagem" no formato que handle() espera
-                handle({"from": {"id": CFG["allowed_user_id"]},
+                handle({"from": {"id": CFG.get("allowed_user_id")},
                         "chat": {"id": CFG.get("chat_id")},
                         "message_thread_id": CFG.get("topic_id"),
                         "text": text})

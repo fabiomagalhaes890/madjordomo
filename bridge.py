@@ -29,6 +29,7 @@ apontando para o MESMO repositório/database que os nós usam.
 """
 import json
 import time
+import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
@@ -36,10 +37,10 @@ from pathlib import Path
 import channels as _channels
 
 BASE = Path(__file__).resolve().parent
-CFG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+CFG = _channels.load_config(BASE / "config.json")
 BR = CFG.get("bridge") or {}
 STATE = BASE / "bridge_state.json"
-API = f"https://api.telegram.org/bot{BR['telegram_token']}"
+API = f"https://api.telegram.org/bot{BR.get('telegram_token', '')}"
 
 
 def load_state():
@@ -69,8 +70,28 @@ def tg_send(text, topic_id):
             p["message_thread_id"] = topic_id
         try:
             tg("sendMessage", **p)
+        except urllib.error.HTTPError as e:
+            print("Telegram enviar:", e, e.read().decode("utf-8", "replace"))
         except Exception as e:
             print("Telegram enviar:", e)
+
+
+def discover_ids():
+    """chat_id/allowed_user_id ainda zerados: mostra os IDs das mensagens que chegarem ao bot."""
+    print("chat_id/allowed_user_id não configurados no bloco \"bridge\".\n"
+          "Mande uma mensagem ao bot da ponte (no grupo/tópico desejado) e copie os IDs abaixo. Ctrl+C para sair.")
+    offset = 0
+    while True:
+        try:
+            r = tg("getUpdates", offset=offset, timeout=20, allowed_updates=["message"])
+        except KeyboardInterrupt:
+            return
+        for u in r.get("result", []):
+            offset = u["update_id"] + 1
+            m = u.get("message", {})
+            chat = m.get("chat", {})
+            print(f'allowed_user_id: {m.get("from", {}).get("id")}  chat_id: {chat.get("id")}  '
+                  f'topic_id: {m.get("message_thread_id")}  ({chat.get("title") or chat.get("type")})')
 
 
 def channel_for(node):
@@ -202,4 +223,7 @@ if __name__ == "__main__":
     if not BR:
         print('Falta o bloco "bridge" no config.json.')
         raise SystemExit(1)
+    if not BR.get("chat_id") or not BR.get("allowed_user_id"):
+        discover_ids()
+        raise SystemExit(0)
     main()

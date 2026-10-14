@@ -30,6 +30,34 @@ import urllib.request
 import uuid
 
 
+def load_config(path):
+    """Lê um config.json aceitando comentários // (linha inteira ou no fim da linha).
+    "//" dentro de strings (ex.: URLs) é preservado."""
+    raw = path.read_text(encoding="utf-8-sig")
+    out, in_str, esc, i = [], False, False, 0
+    while i < len(raw):
+        c = raw[i]
+        if in_str:
+            out.append(c)
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+            out.append(c)
+        elif raw.startswith("//", i):
+            while i < len(raw) and raw[i] != "\n":
+                i += 1
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return json.loads("".join(out))
+
+
 def make_channel(cfg, state, save_state):
     kind = (cfg.get("channel") or "telegram").lower()
     if kind == "telegram":
