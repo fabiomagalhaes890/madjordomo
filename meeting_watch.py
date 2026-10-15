@@ -2,7 +2,8 @@
 """
 Reunião → resumo. Grava o áudio do sistema (o que você ouve na call),
 transcreve localmente com faster-whisper e pede ao agente um resumo, que chega
-no Telegram do mesmo bot do Majordomo. Nada de áudio sai da máquina.
+pelo mesmo canal do Majordomo (Telegram direto, ou intermediário pela ponte, no nó
+"<node>-reuniao"). Nada de áudio sai da máquina.
 
     python -m pip install faster-whisper soundcard numpy
     # para gravar, nada mais; para gravar o áudio DO SISTEMA (loopback) o
@@ -38,28 +39,32 @@ import urllib.request
 import wave
 from pathlib import Path
 
+import channels as _channels
+
 BASE = Path(__file__).resolve().parent
-CFG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+CFG = _channels.load_config(BASE / "config.json")
 MT = CFG.get("meeting") or {}
-API = f"https://api.telegram.org/bot{CFG['telegram_token']}"
 OUT = Path(MT.get("out_dir", str(BASE / "reunioes")))
 STATE = BASE / "meeting_state.json"
+CH_STATE = BASE / "meeting_channel_state.json"  # offset/ids lidos do canal
 SAMPLE_RATE = 16000  # Whisper trabalha em 16 kHz
 CHUNK_SEC = 4
 
 
-# ---------------------------------------------------------------- telegram
+# ---------------------------------------------------------------- canal
+ch_state = json.loads(CH_STATE.read_text(encoding="utf-8")) if CH_STATE.exists() else {}
+
+
+def save_ch_state():
+    CH_STATE.write_text(json.dumps(ch_state), encoding="utf-8")
+
+
+# Mesmo canal do Majordomo (telegram direto ou intermediário, no nó "<node>-reuniao").
+CHANNEL = _channels.open_channel(CFG, ch_state, save_ch_state, role="reuniao")
+
+
 def send(text):
-    for i in range(0, len(text), 3900):
-        params = {"chat_id": CFG["chat_id"], "text": text[i:i + 3900]}
-        if CFG.get("topic_id"):
-            params["message_thread_id"] = CFG["topic_id"]
-        try:
-            urllib.request.urlopen(urllib.request.Request(
-                f"{API}/sendMessage", data=json.dumps(params).encode(),
-                headers={"Content-Type": "application/json"}), timeout=30)
-        except Exception as e:
-            print("Telegram:", e)
+    CHANNEL.send(text)
 
 
 # ---------------------------------------------------------------- gravação (loopback)
@@ -173,27 +178,17 @@ def cli_start(label):
 
 
 def serve():
-    """Escuta o Telegram e grava/para sob comando. Uma gravação por vez."""
+    """Escuta o canal (Telegram ou intermediário) e grava/para sob comando. Uma gravação por vez."""
     import threading
     send("🟢 Reuniões online. /gravar para começar.")
-    offset = load_state().get("offset", 0)
     rec_thread = None
     stop = {"stop": False}
     cur = {"label": None, "wav": None, "started": 0}
 
     while True:
         try:
-            url = f"{API}/getUpdates?offset={offset}&timeout=25&allowed_updates=[\"message\"]"
-            with urllib.request.urlopen(url, timeout=40) as r:
-                res = json.loads(r.read())
-            for u in res.get("result", []):
-                offset = u["update_id"] + 1
-                m = u.get("message", {})
-                if m.get("from", {}).get("id") != CFG["allowed_user_id"]:
-                    continue
-                if CFG.get("topic_id") and m.get("message_thread_id") != CFG["topic_id"]:
-                    continue
-                t = (m.get("text") or "").strip()
+            for t, meta in CHANNEL.poll():
+                CHANNEL.ack(meta)  # antes de agir: um /parar não roda duas vezes
                 cmd, _, arg = t.partition(" ")
                 cmd = cmd.split("@")[0].lower()
                 if cmd == "/gravar" and not rec_thread:
@@ -216,6 +211,9 @@ def serve():
                         send(f"🔴 Gravando {cur['label']} há {mins} min.")
                     else:
                         send("⚪ Nenhuma gravação em andamento.")
+            # intermediários não têm long-poll: aguarda entre ciclos
+            if not _channels.is_direct(CFG):
+                time.sleep(CFG.get("poll_sec", 15))
         except Exception as e:
             print("serve:", e)
             time.sleep(5)

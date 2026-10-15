@@ -71,6 +71,22 @@ def make_channel(cfg, state, save_state):
     raise ValueError(f"channel desconhecido: {kind}")
 
 
+def open_channel(cfg, state, save_state, role=None, tg_timeout=25):
+    """Canal para os scripts auxiliares (browser_watch, meeting_watch).
+    Com intermediário, cada script usa um nó próprio ("<node>-<role>") para não disputar
+    o inbox com o majordomo.py; na ponte, liste esse nó com um tópico só para ele.
+    tg_timeout = long-poll do Telegram direto (0 = não bloqueia)."""
+    cfg = dict(cfg)
+    cfg["tg_poll_timeout"] = tg_timeout
+    if role and (cfg.get("channel") or "telegram").lower() != "telegram":
+        cfg["node"] = f"{cfg.get('node', 'default')}-{role}"
+    return make_channel(cfg, state, save_state)
+
+
+def is_direct(cfg):
+    return (cfg.get("channel") or "telegram").lower() == "telegram"
+
+
 # ======================================================================
 # Telegram — direto (comportamento original)
 # ======================================================================
@@ -105,7 +121,7 @@ class TelegramChannel:
         out = []
         try:
             r = self._tg("getUpdates", offset=self.state.get("offset", 0),
-                         timeout=25, allowed_updates=["message"])
+                         timeout=self.cfg.get("tg_poll_timeout", 25), allowed_updates=["message"])
         except Exception as e:
             print("Telegram poll:", e)
             return out
@@ -305,16 +321,19 @@ class NotionChannel:
             return json.loads(r.read())
 
     def send(self, text):
-        body = {"parent": {"database_id": self.db},
-                "properties": {
-                    "Texto": {"title": [{"text": {"content": (text or "")[:1900]}}]},
-                    "Direcao": {"select": {"name": "out"}},
-                    "No": {"rich_text": [{"text": {"content": self.node}}]},
-                    "Lida": {"checkbox": False}}}
-        try:
-            self._req("POST", "https://api.notion.com/v1/pages", body)
-        except Exception as e:
-            print("Notion enviar:", e)
+        text = text or " "
+        for i in range(0, len(text), 1900):  # limite de 2000 chars por texto no Notion
+            body = {"parent": {"database_id": self.db},
+                    "properties": {
+                        "Texto": {"title": [{"text": {"content": text[i:i + 1900]}}]},
+                        "Direcao": {"select": {"name": "out"}},
+                        "No": {"rich_text": [{"text": {"content": self.node}}]},
+                        "Lida": {"checkbox": False}}}
+            try:
+                self._req("POST", "https://api.notion.com/v1/pages", body)
+            except Exception as e:
+                print("Notion enviar:", e)
+                return
 
     def poll(self):
         out = []

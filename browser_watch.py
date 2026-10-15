@@ -4,7 +4,8 @@ Vigia de navegador para Teams ou Slack web (DMs e menções a você), com
 autoconserto assistido quando o layout da tela muda.
 
 NÃO instala nada no Teams/Slack: abre a versão web num perfil de navegador
-próprio e lê a tela. Usa o mesmo bot/tópico do Telegram do Majordomo.
+próprio e lê a tela. Usa o mesmo canal do Majordomo (Telegram direto, ou
+GitHub/GitLab/Notion pela ponte, no nó "<node>-watch").
 
     pip install playwright
     playwright install chromium
@@ -50,31 +51,22 @@ except ImportError:
     print("Instale o Playwright: pip install playwright && playwright install chromium")
     sys.exit(1)
 
+import channels as _channels
+
 BASE = Path(__file__).resolve().parent
-CFG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+CFG = _channels.load_config(BASE / "config.json")
 BW = CFG.get("browser_watch") or {}
 SEL_FILE = BASE / "selectors.json"
 STATE = BASE / "browser_state.json"
 EVID = BASE / "evidencia"
-API = f"https://api.telegram.org/bot{CFG['telegram_token']}"
-
-
-def send(text):
-    params = {"chat_id": CFG["chat_id"], "text": text}
-    if CFG.get("topic_id"):
-        params["message_thread_id"] = CFG["topic_id"]
-    data = json.dumps(params).encode()
-    try:
-        urllib.request.urlopen(urllib.request.Request(
-            f"{API}/sendMessage", data=data, headers={"Content-Type": "application/json"}), timeout=30)
-    except Exception as e:
-        print("Telegram:", e)
 
 
 def load_state():
-    base = {"seen": [], "refs": {}, "ref_n": 0, "tg_offset": 0, "mode": "ok"}
+    base = {"seen": [], "refs": {}, "ref_n": 0, "offset": 0, "mode": "ok"}
     if STATE.exists():
         base.update(json.loads(STATE.read_text(encoding="utf-8")))
+    if "tg_offset" in base:  # nome antigo do offset do Telegram
+        base["offset"] = base.pop("tg_offset")
     return base
 
 
@@ -86,27 +78,30 @@ def save_state():
     STATE.write_text(json.dumps(st, indent=2), encoding="utf-8")
 
 
+# Mesmo canal do Majordomo (telegram direto ou intermediário, no nó "<node>-watch").
+# tg_timeout=0: o laço de vigia não pode ficar preso no long-poll.
+CHANNEL = _channels.open_channel(CFG, st, save_state, role="watch", tg_timeout=0)
+# intervalo entre consultas aos comandos enquanto espera um /consertar
+CMD_EVERY = 5 if _channels.is_direct(CFG) else max(5, CFG.get("poll_sec", 15))
+
+
+def send(text):
+    CHANNEL.send(text)
+
+
 def load_sel():
     return json.loads(SEL_FILE.read_text(encoding="utf-8"))[BW["platform"]]
 
 
 def poll_commands():
     respostas, acao = [], None
-    url = f"{API}/getUpdates?" + urllib.parse.urlencode(
-        {"offset": st["tg_offset"], "timeout": 0, "allowed_updates": json.dumps(["message"])})
     try:
-        with urllib.request.urlopen(url, timeout=15) as r:
-            res = json.loads(r.read())
-    except Exception:
+        msgs = CHANNEL.poll()
+    except Exception as e:
+        print("Canal:", e)
         return respostas, acao
-    for u in res.get("result", []):
-        st["tg_offset"] = u["update_id"] + 1
-        m = u.get("message", {})
-        if m.get("from", {}).get("id") != CFG["allowed_user_id"]:
-            continue
-        if CFG.get("topic_id") and m.get("message_thread_id") != CFG["topic_id"]:
-            continue
-        text = (m.get("text") or "").strip()
+    for text, meta in msgs:
+        CHANNEL.ack(meta)
         low = text.split("@")[0].lower()
         if low == "/consertar":
             acao = "consertar"
@@ -360,7 +355,7 @@ def run(headless):
             while waited < every:
                 time.sleep(5)
                 waited += 5
-                if st.get("mode") == "cego":
+                if st.get("mode") == "cego" and waited % CMD_EVERY < 5:
                     _, a2 = poll_commands()
                     s = handle_actions(page, s, a2)
                     if a2 in ("consertar", "cancelar"):

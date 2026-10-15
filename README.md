@@ -167,6 +167,18 @@ nós e associa cada um a um **tópico do grupo**:
 Uma só ponte atende todos os nós: cada PC aparece no seu tópico, e você responde no tópico certo
 para falar com aquele PC.
 
+**Vigia de navegador e reuniões pelo intermediário.** O `browser_watch.py` e o `meeting_watch.py`
+usam o mesmo `channel` do config, mas cada um com nó próprio (`<node>-watch` e `<node>-reuniao`),
+para não disputar mensagens com o Majordomo. Liste esses nós na ponte, cada um com seu tópico:
+
+```jsonc
+"nodes": [
+  { "node": "node-1",         "topic_id": 11 },
+  { "node": "node-1-watch",   "topic_id": 13 },
+  { "node": "node-1-reuniao", "topic_id": 14 }
+]
+```
+
 > Como são caixas de mensagens em arquivo, os canais intermediários têm uma pequena latência (o
 > `poll_sec`, por padrão 15s) — não é instantâneo como o Telegram direto, mas resolve o bloqueio.
 > E, como sempre: confirme que usar um intermediário está de acordo com a política do cliente.
@@ -456,6 +468,18 @@ Cobre e-mail, agenda e chats do Teams:
 
 > Muitos tenants exigem aprovação de admin para apps de terceiros. Se bloquear, use as
 > notificações nativas no celular, ou o vigia de navegador.
+
+### Avisos de e-mail
+
+Os e-mails novos de cada checagem chegam numa **mensagem só**, agrupados por remetente, com
+apenas o assunto (respostas `Re:`/`Fwd:` do mesmo assunto viram uma linha com a contagem). Opções
+no bloco `google` ou `microsoft`:
+
+| Campo | Padrão | O que faz |
+|---|---|---|
+| `gmail_ignore_from` / `mail_ignore_from` | `[]` | Remetentes que nunca avisam (trecho do endereço, ex.: `"@po.atlassian.net"`). |
+| `skip_pr_emails` | `true` | Com o vigia de PRs ligado, ignora os e-mails de notificação do GitHub/GitLab/Azure (o vigia já avisa). |
+| `mail_snippet` | `false` | `true` mostra um trecho do corpo. E-mails do Slack sempre mostram (o trecho é a mensagem). |
 
 ### Slack
 

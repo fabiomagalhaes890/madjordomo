@@ -358,8 +358,33 @@ REVIEW_PT = {"APPROVED": "aprovado", "CHANGES_REQUESTED": "mudanças pedidas",
              "REVIEW_REQUIRED": "aguardando review", "": "sem review", None: "sem review"}
 
 
+def pr_event(icon, what, name, url, detail=""):
+    """Um bloco de evento de PR: título na 1a linha, detalhe e link recuados."""
+    return f"{icon} {what} — {name}" + (f"\n   {detail}" if detail else "") + f"\n   {url}"
+
+
+def comments_detail(qtd, authors=()):
+    """'3 comentários novos · claude[bot] ×2, cursor[bot]'"""
+    txt = f"{qtd} comentário{'s' if qtd > 1 else ''} novo{'s' if qtd > 1 else ''}"
+    if authors:
+        cont = {}
+        for a in authors:
+            cont[a] = cont.get(a, 0) + 1
+        txt += " · " + ", ".join(a + (f" ×{c}" if c > 1 else "") for a, c in cont.items())
+    return txt
+
+
+def send_pr_digest(events):
+    """Todos os eventos do ciclo numa mensagem só, separados por linha em branco."""
+    if len(events) == 1:
+        send(events[0])
+    elif events:
+        send("🔀 Atualizações de PR\n\n" + "\n\n".join(events))
+
+
 def gh_check_prs(notify=True):
     tracked = state.setdefault("gh_prs", {})
+    events = []
     found = gh_json(["search", "prs", "--author=@me", "--state=open", "--limit", "30",
                      "--json", "url,title,repository"] + ([f"--owner={GH['owner']}"] if GH.get("owner") else []))
     for pr in found or []:
@@ -367,28 +392,38 @@ def gh_check_prs(notify=True):
             tracked[pr["url"]] = {"title": pr["title"], "repo": pr["repository"]["name"],
                                   "ci": None, "review": None, "n": 0}
             if notify:
-                send(f"👀 Acompanhando PR {pr['repository']['name']}: {pr['title']}\n{pr['url']}")
+                events.append(pr_event("👀", "Acompanhando", f"{pr['repository']['name']}: {short(pr['title'], 80)}",
+                                       pr["url"]))
     for url, old in list(tracked.items()):
         v = gh_json(["pr", "view", url, "--json", "state,statusCheckRollup,reviewDecision,comments,reviews"])
         name = f"{old['repo']}: {short(old['title'], 80)}"
         if v["state"] != "OPEN":
             if notify:
-                send(("🚀 PR mergeado" if v["state"] == "MERGED" else "🗑️ PR fechado") + f" — {name}\n{url}")
+                events.append(pr_event("🚀" if v["state"] == "MERGED" else "🗑️",
+                                       "Mergeado" if v["state"] == "MERGED" else "Fechado", name, url))
             tracked.pop(url)
             continue
         ci = ci_status(v.get("statusCheckRollup"))
         review = REVIEW_PT.get(v.get("reviewDecision"), v.get("reviewDecision"))
-        n = len(v.get("comments") or []) + len(v.get("reviews") or [])
+        posts = sorted([(c.get("createdAt", ""), (c.get("author") or {}).get("login", "?"))
+                        for c in v.get("comments") or []] +
+                       [(r.get("submittedAt", ""), (r.get("author") or {}).get("login", "?"))
+                        for r in v.get("reviews") or []])
+        n = len(posts)
         if notify and old["ci"] is not None:
             if ci != old["ci"] and ci in ("ok", "falhou"):
-                extra = f"\n\n/aprovacao {url}" if ci == "ok" and SLACK.get("approval_channel") else ""
-                send(f"{'✅ CI passou' if ci == 'ok' else '❌ CI falhou'} — {name}\n{url}{extra}")
+                extra = f"/aprovacao {url}" if ci == "ok" and SLACK.get("approval_channel") else ""
+                events.append(pr_event("✅" if ci == "ok" else "❌", "CI passou" if ci == "ok" else "CI falhou",
+                                       name, url, extra))
             if review != old["review"] and review in ("aprovado", "mudanças pedidas"):
-                send(f"{'👍 Aprovado' if review == 'aprovado' else '✏️ Pediram mudanças'} — {name}\n{url}")
+                events.append(pr_event("👍" if review == "aprovado" else "✏️",
+                                       "Aprovado" if review == "aprovado" else "Pediram mudanças", name, url))
             elif n > old["n"]:
-                send(f"🗨️ Comentário novo no PR — {name}\n{url}")
+                events.append(pr_event("🗨️", "Comentários", name, url,
+                                       comments_detail(n - old["n"], [a for _, a in posts[old["n"]:]])))
         old.update(ci=ci, review=review, n=n)
     save_state()
+    send_pr_digest(events)
     return tracked
 
 
@@ -397,6 +432,7 @@ VOTE_REVIEW = {10: "aprovado", 5: "aprovado", -5: "mudanças pedidas", -10: "mud
 
 def azdo_check_prs(notify=True):
     tracked = state.setdefault("gh_prs", {})
+    events = []
     org, proj = AZDO["org"], AZDO["project"]
     prs = azdo(f"/_apis/git/pullrequests?searchCriteria.creatorId={azdo_me()}"
                f"&searchCriteria.status=active&$top=50").get("value", [])
@@ -409,7 +445,7 @@ def azdo_check_prs(notify=True):
                             "id": pr["pullRequestId"], "repo_id": repo["id"],
                             "project_id": repo.get("project", {}).get("id")}
             if notify:
-                send(f"👀 Acompanhando PR {repo['name']}: {pr['title']}\n{url}")
+                events.append(pr_event("👀", "Acompanhando", f"{repo['name']}: {short(pr['title'], 80)}", url))
     for url, old in list(tracked.items()):
         if "repo_id" not in old:
             continue  # PR de outro provedor
@@ -418,7 +454,8 @@ def azdo_check_prs(notify=True):
         name = f"{old['repo']}: {short(old['title'], 80)}"
         if v["status"] != "active":
             if notify:
-                send(("🚀 PR concluído" if v["status"] == "completed" else "🗑️ PR abandonado") + f" — {name}\n{url}")
+                events.append(pr_event("🚀" if v["status"] == "completed" else "🗑️",
+                                       "Concluído" if v["status"] == "completed" else "Abandonado", name, url))
             tracked.pop(url)
             continue
         votes = [r.get("vote", 0) for r in v.get("reviewers", [])]
@@ -441,17 +478,23 @@ def azdo_check_prs(notify=True):
         except Exception as e:
             print("Azure DevOps (policies):", e)
         threads = azdo(f"/_apis/git/repositories/{rid}/pullRequests/{pid}/threads").get("value", [])
-        n = sum(1 for t in threads for c in t.get("comments", [])
-                if c.get("commentType") == "text" and not c.get("isDeleted"))
+        posts = sorted((c.get("publishedDate", ""), (c.get("author") or {}).get("displayName", "?"))
+                       for t in threads for c in t.get("comments", [])
+                       if c.get("commentType") == "text" and not c.get("isDeleted"))
+        n = len(posts)
         if notify and old["ci"] is not None:
             if ci != old["ci"] and ci in ("ok", "falhou"):
-                send(f"{'✅ Build passou' if ci == 'ok' else '❌ Build falhou'} — {name}\n{url}")
+                events.append(pr_event("✅" if ci == "ok" else "❌", "Build passou" if ci == "ok" else "Build falhou",
+                                       name, url))
             if review != old["review"] and review in ("aprovado", "mudanças pedidas"):
-                send(f"{'👍 Aprovado' if review == 'aprovado' else '✏️ Pediram mudanças'} — {name}\n{url}")
+                events.append(pr_event("👍" if review == "aprovado" else "✏️",
+                                       "Aprovado" if review == "aprovado" else "Pediram mudanças", name, url))
             elif n > old["n"]:
-                send(f"🗨️ Comentário novo no PR — {name}\n{url}")
+                events.append(pr_event("🗨️", "Comentários", name, url,
+                                       comments_detail(n - old["n"], [a for _, a in posts[old["n"]:]])))
         old.update(ci=ci, review=review, n=n)
     save_state()
+    send_pr_digest(events)
     return tracked
 
 
@@ -475,6 +518,7 @@ GL_PIPE = {"success": "ok", "failed": "falhou", "running": "rodando", "pending":
 
 def gl_check_prs(notify=True):
     tracked = state.setdefault("gh_prs", {})
+    events = []
     me = gl_api("/user")["id"]
     mrs = gl_api("/merge_requests", {"author_id": me, "state": "opened", "scope": "all", "per_page": 50})
     for mr in mrs:
@@ -484,7 +528,8 @@ def gl_check_prs(notify=True):
                             "ci": None, "review": None, "n": 0,
                             "pid": mr["project_id"], "iid": mr["iid"]}
             if notify:
-                send(f"👀 Acompanhando MR {tracked[url]['repo']}: {mr['title']}\n{url}")
+                events.append(pr_event("👀", "Acompanhando MR", f"{tracked[url]['repo']}: {short(mr['title'], 80)}",
+                                       url))
     for url, old in list(tracked.items()):
         if "pid" not in old or "iid" not in old:
             continue  # MR só tem pid/iid; pula PRs de outro provedor
@@ -492,7 +537,8 @@ def gl_check_prs(notify=True):
         name = f"{old['repo']}: {short(old['title'], 80)}"
         if mr["state"] != "opened":
             if notify:
-                send(("🚀 MR mergeado" if mr["state"] == "merged" else "🗑️ MR fechado") + f" — {name}\n{url}")
+                events.append(pr_event("🚀" if mr["state"] == "merged" else "🗑️",
+                                       "MR mergeado" if mr["state"] == "merged" else "MR fechado", name, url))
             tracked.pop(url)
             continue
         ps = (mr.get("head_pipeline") or mr.get("pipeline") or {}).get("status")
@@ -510,13 +556,16 @@ def gl_check_prs(notify=True):
         n = mr.get("user_notes_count", 0)
         if notify and old["ci"] is not None:
             if ci != old["ci"] and ci in ("ok", "falhou"):
-                send(f"{'✅ Pipeline passou' if ci == 'ok' else '❌ Pipeline falhou'} — {name}\n{url}")
+                events.append(pr_event("✅" if ci == "ok" else "❌",
+                                       "Pipeline passou" if ci == "ok" else "Pipeline falhou", name, url))
             if review != old["review"] and review in ("aprovado", "mudanças pedidas"):
-                send(f"{'👍 Aprovado' if review == 'aprovado' else '✏️ Pediram mudanças'} — {name}\n{url}")
+                events.append(pr_event("👍" if review == "aprovado" else "✏️",
+                                       "Aprovado" if review == "aprovado" else "Pediram mudanças", name, url))
             elif n > old["n"]:
-                send(f"🗨️ Comentário novo no MR — {name}\n{url}")
+                events.append(pr_event("🗨️", "Comentários no MR", name, url, comments_detail(n - old["n"])))
         old.update(ci=ci, review=review, n=n)
     save_state()
+    send_pr_digest(events)
     return tracked
 
 
@@ -751,21 +800,62 @@ def events_between(start, end):
     return google_events(start, end) if MAILCAL == "google" else ms_events(start, end)
 
 
+def mail_ignore_list():
+    """Remetentes ignorados: os do config + as notificações de PR quando o vigia de PRs já cobre."""
+    ignore = [s.lower() for s in (MCFG.get("gmail_ignore_from") or MCFG.get("mail_ignore_from") or [])]
+    if PRS and MCFG.get("skip_pr_emails", True):
+        if GH:
+            ignore.append("notifications@github.com")
+        elif GL:
+            ignore.append("gitlab@")
+        else:
+            ignore.append("azuredevops@microsoft.com")
+    return ignore
+
+
+def sender_name(addr):
+    """'"Junior (JIRA)" <jira@x.com>' -> 'Junior (JIRA)'; sem nome, usa o e-mail."""
+    name = (addr or "").split("<")[0].strip().strip('"').strip()
+    return name or (addr or "?").strip("<> ")
+
+
+def mail_digest(msgs):
+    """Uma mensagem só por ciclo: agrupa por remetente e junta assuntos repetidos (Re:, Fwd:)."""
+    groups = {}
+    for m in msgs:
+        subj = re.sub(r"^\s*((re|res|fwd?|enc)\s*:\s*)+", "", html.unescape(m.get("subject") or ""),
+                      flags=re.I).strip() or "(sem assunto)"
+        groups.setdefault(sender_name(m.get("from")), {}).setdefault(subj, []).append(m)
+    snippet = MCFG.get("mail_snippet", False)
+    blocks = [f"📧 {len(msgs)} e-mail(s) novo(s)"]
+    for name, subjects in groups.items():
+        slack_mail = any("slack.com" in m.get("from", "").lower() for ms in subjects.values() for m in ms)
+        lines = [f"{'💬' if slack_mail else '✉️'} {short(name, 60)}"]
+        for subj, ms in subjects.items():
+            lines.append(f"• {short(subj, 120)}" + (f" ({len(ms)})" if len(ms) > 1 else ""))
+            if snippet or slack_mail:  # no Slack o trecho é a própria mensagem
+                lines.append(f"  {short(html.unescape(ms[-1].get('snippet') or ''), 160)}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def mail_watcher():
     every = (MCFG.get("gmail_poll_min") or MCFG.get("mail_poll_min") or 3) * 60
-    ignore = [s.lower() for s in (MCFG.get("gmail_ignore_from") or MCFG.get("mail_ignore_from") or [])]
+    ignore = mail_ignore_list()
     first = "gmail_seen" not in state
     while True:
         try:
             seen = state.setdefault("gmail_seen", [])
+            new = []
             for m in reversed(mail_fetch("", 20, skip=set(seen))):
                 if m["id"] in seen:
                     continue
                 seen.append(m["id"])
                 if first or any(s in m.get("from", "").lower() for s in ignore):
                     continue
-                icon = "💬 Slack (e-mail)" if "slack.com" in m["from"].lower() else "📧"
-                send(f"{icon} {short(m['from'], 80)}\n{short(m['subject'], 150)}\n{short(m['snippet'], 250)}")
+                new.append(m)
+            if new:
+                send(mail_digest(new))
             state["gmail_seen"] = seen[-300:]
             first = False
             save_state()
