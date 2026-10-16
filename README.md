@@ -169,15 +169,21 @@ para falar com aquele PC.
 
 **Vigia de navegador e reuniões pelo intermediário.** O `browser_watch.py` e o `meeting_watch.py`
 usam o mesmo `channel` do config, mas cada um com nó próprio (`<node>-watch` e `<node>-reuniao`),
-para não disputar mensagens com o Majordomo. Liste esses nós na ponte, cada um com seu tópico:
+para não disputar mensagens com o Majordomo. Liste esses nós na ponte; eles podem dividir o
+tópico do PC:
 
 ```jsonc
 "nodes": [
   { "node": "node-1",         "topic_id": 11 },
-  { "node": "node-1-watch",   "topic_id": 13 },
-  { "node": "node-1-reuniao", "topic_id": 14 }
+  { "node": "node-1-watch",   "topic_id": 11 },
+  { "node": "node-1-reuniao", "topic_id": 11 }
 ]
 ```
+
+Num tópico compartilhado, a ponte entrega cada resposta pelo comando: `/consertar`, `/cancelar` e
+`/br` vão para o `-watch`; `/gravar`, `/parar_gravacao` e `/status_reuniao` vão para o
+`-reuniao`; todo o resto (inclusive texto livre) vai para o nó principal. Para outros nomes de
+nó, informe os comandos em `"commands": ["/x", "/y"]`.
 
 > Como são caixas de mensagens em arquivo, os canais intermediários têm uma pequena latência (o
 > `poll_sec`, por padrão 15s) — não é instantâneo como o Telegram direto, mas resolve o bloqueio.
@@ -285,7 +291,7 @@ Comandos de controle (fixos):
 | Comando | O que faz |
 |---|---|
 | `/claude <texto>` | Pedido livre ao agente (nova sessão). |
-| `<texto normal>` | Continua a **thread ativa** (responder perguntas/checkpoints). |
+| `<texto normal>` | Continua a **thread ativa** (responder perguntas/checkpoints). Sem thread ativa (ex.: depois de `/nova`), abre uma sessão nova. |
 | `/threads` | Lista as threads abertas e qual está ativa. |
 | `/ir <rótulo>` | Troca a thread ativa. |
 | `/resp <rótulo> <texto>` | Responde uma thread específica sem trocar a ativa. |

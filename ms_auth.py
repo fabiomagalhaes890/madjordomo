@@ -15,8 +15,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import channels as _channels
+
 BASE = Path(__file__).resolve().parent
-MS = json.loads((BASE / "config.json").read_text(encoding="utf-8"))["microsoft"]
+MS = _channels.load_config(BASE / "config.json")["microsoft"]
 TENANT = MS.get("tenant", "organizations")
 SCOPES = MS.get("scopes", [
     "offline_access", "User.Read", "Mail.Read", "Calendars.Read", "Chat.Read", "ChatMessage.Send",

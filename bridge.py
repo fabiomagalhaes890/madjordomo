@@ -154,8 +154,38 @@ def write_inbox(ch, kind, text):
         ch._req("POST", "https://api.notion.com/v1/pages", body)
 
 
+# Comandos que pertencem aos scripts auxiliares, pelo sufixo do nó. Num tópico com vários
+# nós, a resposta vai para o nó dono do comando; o resto (texto livre inclusive) vai para o
+# nó principal (o que não tem "commands" nem sufixo conhecido).
+ROLE_COMMANDS = {
+    "-watch": ["/consertar", "/cancelar", "/br"],
+    "-reuniao": ["/gravar", "/parar_gravacao", "/status_reuniao"],
+}
+
+
+def node_commands(n):
+    if "commands" in n:
+        return [c.lower() for c in n["commands"]]
+    for suffix, cmds in ROLE_COMMANDS.items():
+        if n["node"].endswith(suffix):
+            return cmds
+    return []
+
+
+def route(nodes_in_topic, text):
+    """Escolhe o nó do tópico que recebe a mensagem, pelo comando."""
+    cmd = text.split(" ", 1)[0].split("@")[0].lower()
+    default = None
+    for node, cmds in nodes_in_topic:
+        if cmd in cmds:
+            return node
+        if not cmds and default is None:
+            default = node
+    return default or nodes_in_topic[0][0]
+
+
 def poll_telegram(topic_to_node):
-    """Suas respostas no Telegram -> (node, texto). Usa o tópico para saber o nó."""
+    """Suas respostas no Telegram -> (node, texto). Usa o tópico (e o comando) para saber o nó."""
     try:
         r = tg("getUpdates", offset=state.get("offset", 0), timeout=20, allowed_updates=["message"])
     except Exception as e:
@@ -169,12 +199,13 @@ def poll_telegram(topic_to_node):
         if m.get("from", {}).get("id") != BR["allowed_user_id"]:
             continue
         tid = m.get("message_thread_id")
-        node = topic_to_node.get(tid)
-        if not node:
-            continue  # resposta fora de um tópico de nó conhecido
+        nodes_in_topic = topic_to_node.get(tid)
+        if not nodes_in_topic:
+            print(f"Ignorada: mensagem fora de um tópico de nó (topic_id={tid})")
+            continue
         t = (m.get("text") or "").strip()
         if t:
-            out.append((node, t))
+            out.append((route(nodes_in_topic, t), t))
     return out
 
 
@@ -183,13 +214,13 @@ def main():
     if not nodes:
         print('Bloco "bridge" precisa de "nodes": [{"node": "...", "topic_id": N}, ...]')
         raise SystemExit(1)
-    # um canal por nó + mapa tópico->nó
+    # um canal por nó + mapa tópico->[(nó, comandos)] (vários nós podem dividir um tópico)
     chans = {}
     topic_to_node = {}
     for n in nodes:
         ch, kind = channel_for(n["node"])
         chans[n["node"]] = (ch, kind, n.get("topic_id"))
-        topic_to_node[n.get("topic_id")] = n["node"]
+        topic_to_node.setdefault(n.get("topic_id"), []).append((n["node"], node_commands(n)))
 
     kind0 = BR.get("intermediary", "github")
     tg_send(f"🌉 Ponte online · {kind0} · {len(nodes)} nó(s): " +

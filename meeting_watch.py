@@ -15,9 +15,9 @@ Uso:
     python meeting_watch.py file <arquivo>   # transcreve/resume um áudio já gravado
 
 Também responde a comandos do Telegram quando rodado com --serve:
-    python meeting_watch.py --serve          # escuta /gravar, /parar, /resumo
+    python meeting_watch.py --serve          # escuta /gravar, /parar_gravacao, /status_reuniao
       /gravar [rótulo]   começa a gravar
-      /parar             para e gera o resumo
+      /parar_gravacao    para e gera o resumo (/parar também, se o tópico for só do meeting)
       /status_reuniao    diz se está gravando e há quanto tempo
 
 Config (bloco "meeting" no config.json do Majordomo):
@@ -200,7 +200,7 @@ def serve():
                     OUT.mkdir(parents=True, exist_ok=True)
                     rec_thread.start()
                     send(f"🔴 Gravando: {cur['label']}")
-                elif cmd == "/parar" and rec_thread:
+                elif cmd in ("/parar_gravacao", "/parar") and rec_thread:
                     stop["stop"] = True
                     rec_thread.join(timeout=20)
                     rec_thread = None

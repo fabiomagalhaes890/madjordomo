@@ -7,7 +7,7 @@ Só usa a biblioteca padrão do Python (3.10+). Sem pip install.
 
 Comandos no Telegram:
   (os comandos de trabalho vêm do "commands" do config.json — veja /ajuda)
-  /tasks            seus cards/work items abertos (Jira ou Azure DevOps)
+  /tasks [filtro]   seus cards abertos por status (filtro: status, chave ou título)
   /prs              status dos seus PRs abertos (GitHub ou Azure Repos)
   /agenda [dia]     reuniões: hoje, amanha, seg..dom, 15/10 ou semana
   /emails [busca]   últimos e-mails não lidos (ou busca)
@@ -16,7 +16,7 @@ Comandos no Telegram:
   /sr s3 <texto>    responde no Slack a notificação [s3]
   /aprovacao <PR>   pede aprovação do PR no canal do Slack
   /claude <texto>   pedido livre ao Claude (nova sessão)
-  <texto normal>    continua a sessão atual (responder checkpoints/perguntas)
+  <texto normal>    continua a thread ativa; sem thread ativa, abre uma nova
   /threads          lista as threads abertas e a ativa
   /ir <rótulo>      troca a thread ativa
   /resp <rótulo> …  responde uma thread específica sem trocar a ativa
@@ -90,8 +90,17 @@ def tg(method, **params):
 
 def send(text, chat_id=None, thread_id=None):
     """Envia pelo canal configurado (telegram direto, ou github/notion intermediário)."""
-    if CHANNEL is not None:
+    if CHANNEL is not None and not chat_id:
         CHANNEL.send(text or "(sem resposta)")
+        return
+    if chat_id:  # resposta a um chat específico (modo configuração)
+        try:
+            params = {"chat_id": chat_id, "text": (text or "")[:MAX_MSG]}
+            if thread_id:
+                params["message_thread_id"] = thread_id
+            tg("sendMessage", **params)
+        except Exception as e:
+            print("Erro ao enviar mensagem:", e)
         return
     # fallback (antes de main criar o canal): tenta telegram direto
     try:
@@ -111,7 +120,7 @@ def jira_search():
     """Retorna lista de (key, status, prioridade, resumo) dos cards do JQL configurado."""
     base = JIRA["base_url"].rstrip("/")
     jql = JIRA.get("jql", "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC")
-    fields = "summary,status,priority"
+    fields = "summary,status,priority,issuetype,parent"
     if JIRA.get("pat"):  # Jira Server / Data Center
         url = f"{base}/rest/api/2/search?" + urllib.parse.urlencode(
             {"jql": jql, "fields": fields, "maxResults": 50})
@@ -127,6 +136,13 @@ def jira_search():
     out = []
     for it in data.get("issues", []):
         f = it.get("fields", {})
+        st = f.get("status") or {}
+        STATUS_CAT[st.get("name", "?")] = (st.get("statusCategory") or {}).get("key", "")
+        tp = f.get("issuetype") or {}
+        par = f.get("parent") or {}
+        TASK_META[it["key"]] = {"type": tp.get("name", ""), "sub": bool(tp.get("subtask")),
+                                "parent": par.get("key"),
+                                "parent_title": (par.get("fields") or {}).get("summary", "")}
         out.append((
             it["key"],
             (f.get("status") or {}).get("name", "?"),
@@ -136,11 +152,77 @@ def jira_search():
     return out
 
 
-def format_tasks(items):
+STATUS_CAT = {}  # nome do status -> categoria do Jira ("new", "indeterminate", "done")
+TASK_META = {}   # chave -> {"type", "sub" (é subtarefa), "parent", "parent_title"}
+TODO_STATUS = {"backlog", "to do", "todo", "a fazer", "novo", "new", "aberto", "open", "proposed",
+               "pendente", "selecionado para desenvolvimento", "selected for development"}
+HIGH_PRIO = {"highest", "high", "alta", "altíssima", "muito alta", "crítica", "critical", "blocker", "1"}
+TODO_MAX = 8  # itens listados por status "a fazer"; o resto vira contagem
+
+
+def is_todo(status):
+    cat = STATUS_CAT.get(status)
+    return cat == "new" if cat else status.strip().lower() in TODO_STATUS
+
+
+def format_tasks(items, filtro=""):
+    """Agrupa por status: em andamento primeiro, 'a fazer' por último (resumido).
+    filtro: trecho do status, da chave ou do título (ex.: /tasks qa)."""
+    f = filtro.strip().lower()
+    if f:
+        items = [i for i in items if f in i[1].lower() or f in i[0].lower() or f in i[3].lower()
+                 or f in TASK_META.get(i[0], {}).get("type", "").lower()]
     if not items:
-        return "Nenhum card aberto em seu nome."
-    lines = [f"{k} · {st} · {pr}\n   {s}" for k, st, pr, s in items]
-    return f"📋 {len(items)} card(s):\n\n" + "\n".join(lines)
+        return f"Nenhum card com \"{filtro}\"." if f else "Nenhum card aberto em seu nome."
+
+    def meta(k):
+        return TASK_META.get(k, {})
+
+    def alta(pr):
+        return " ❗" if str(pr).strip().lower() in HIGH_PRIO else ""
+
+    def sub_line(k, st, pr, s):
+        return f"   ↳ {k} · {st}{alta(pr)} — {short(s, 60)}"
+
+    keys = {i[0] for i in items}
+    children, orphans, tops = {}, {}, []
+    for it in items:
+        par = meta(it[0]).get("parent")
+        if par and par in keys:                 # pai também está na lista: vai embaixo dele
+            children.setdefault(par, []).append(it)
+        elif par and meta(it[0]).get("sub"):    # subtarefa de card que não é seu / já fechado
+            orphans.setdefault(par, []).append(it)
+        else:
+            tops.append(it)
+
+    groups = {}
+    for it in tops:
+        groups.setdefault(it[1], []).append(it)
+    order = sorted(groups, key=lambda st: (is_todo(st), -len(groups[st])))
+    nsub = len(items) - len(tops)
+    head = f"📋 {len(tops)} card(s)" + (f" + {nsub} subtarefa(s)" if nsub else "")
+    if order:
+        head += "\n" + " · ".join(f"{len(groups[st])} {st}" for st in order)
+    blocks = [head]
+    for st in order:
+        todo = is_todo(st)
+        rows = groups[st]
+        lines = [f"{'📥' if todo else '🔧'} {st} ({len(rows)})"]
+        shown = rows[:TODO_MAX] if todo and not f else rows
+        for k, _, pr, s in shown:
+            tipo = meta(k).get("type")
+            lines.append(f"• {k}{' · ' + tipo if tipo else ''}{alta(pr)} — {short(s, 70)}")
+            lines += [sub_line(*c) for c in children.get(k, [])]
+        if len(shown) < len(rows):
+            lines.append(f"  … +{len(rows) - len(shown)} (veja com /tasks {st.lower()})")
+        blocks.append("\n".join(lines))
+    if orphans:
+        lines = ["🧩 Subtarefas em cards de outros"]
+        for par, subs in orphans.items():
+            lines.append(f"• {par} — {short(meta(subs[0][0]).get('parent_title', ''), 60)}")
+            lines += [sub_line(*c) for c in subs]
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 
 # ---------------------------------------------------------------- azure devops
@@ -180,9 +262,12 @@ def azdo_tasks():
     out = []
     for it in items:
         f = it.get("fields", {})
+        par = f.get("System.Parent")
+        TASK_META[str(it["id"])] = {"type": f.get("System.WorkItemType", ""), "sub": False,
+                                    "parent": str(par) if par else None, "parent_title": ""}
         out.append((str(it["id"]), f.get("System.State", "?"),
                     str(f.get("Microsoft.VSTS.Common.Priority", "-")),
-                    f"[{f.get('System.WorkItemType', '')}] {f.get('System.Title', '')}"))
+                    f.get("System.Title", "")))
     return out
 
 
@@ -1191,7 +1276,7 @@ def handle(msg):
             send("Jira/Azure DevOps não configurado no config.json.")
             return
         try:
-            send(format_tasks(tasks_search()))
+            send(format_tasks(tasks_search(), arg))
         except Exception as e:
             send(f"❌ Erro ao consultar as tarefas: {e}")
     elif cmd == "/prs":
@@ -1321,7 +1406,9 @@ def handle(msg):
     else:
         label = state.get("active")
         if not label:
-            send("Não há thread ativa. Veja /ajuda ou comece com /analisar.")
+            # sem thread ativa (ex.: depois de /nova): texto livre abre sessão nova, como /claude
+            label, _ = thread_label("")
+            start_job(f"pedido: {text[:40]}", text, label, new_session=True)
             return
         start_job(f"continuação de {label}", text, label, new_session=False)
 
@@ -1350,6 +1437,14 @@ def main():
         try:
             for text, meta in CHANNEL.poll():
                 # monta uma "mensagem" no formato que handle() espera
+                if DIRECT_TELEGRAM and not CFG.get("allowed_user_id") and meta:
+                    # modo configuração: usa os IDs reais de quem escreveu
+                    print(f"Modo configuração: user_id={meta['from']} chat_id={meta['chat']} "
+                          f"topic_id={meta['thread']}")
+                    handle({"from": {"id": meta["from"]}, "chat": {"id": meta["chat"]},
+                            "message_thread_id": meta["thread"], "text": text})
+                    CHANNEL.ack(meta)
+                    continue
                 handle({"from": {"id": CFG.get("allowed_user_id")},
                         "chat": {"id": CFG.get("chat_id")},
                         "message_thread_id": CFG.get("topic_id"),

@@ -23,6 +23,7 @@ O formato de uma "mensagem" trocada pelos intermediários é um JSON:
 "out" = Majordomo→usuário; "in" = usuário→Majordomo.
 """
 import json
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -30,9 +31,22 @@ import urllib.request
 import uuid
 
 
+def setup_tls(cfg):
+    """HTTPS para todo urlopen do processo.
+    Redes com inspeção de HTTPS (Zscaler, Netskope...) usam uma CA da empresa que o Python 3.13+
+    recusa no modo estrito ("CA cert does not include key usage extension"). Desligar só o modo
+    estrito mantém a verificação da cadeia. "ca_bundle" acrescenta um .pem com a CA da empresa."""
+    ctx = ssl.create_default_context()  # no Windows já carrega o repositório de certificados do sistema
+    if not cfg.get("tls_strict", False) and hasattr(ssl, "VERIFY_X509_STRICT"):
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    if cfg.get("ca_bundle"):
+        ctx.load_verify_locations(cafile=cfg["ca_bundle"])
+    urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx)))
+
+
 def load_config(path):
     """Lê um config.json aceitando comentários // (linha inteira ou no fim da linha).
-    "//" dentro de strings (ex.: URLs) é preservado."""
+    "//" dentro de strings (ex.: URLs) é preservado. Também prepara o HTTPS (setup_tls)."""
     raw = path.read_text(encoding="utf-8-sig")
     out, in_str, esc, i = [], False, False, 0
     while i < len(raw):
@@ -55,7 +69,9 @@ def load_config(path):
         else:
             out.append(c)
         i += 1
-    return json.loads("".join(out))
+    cfg = json.loads("".join(out))
+    setup_tls(cfg)
+    return cfg
 
 
 def make_channel(cfg, state, save_state):
@@ -129,6 +145,12 @@ class TelegramChannel:
             self.state["offset"] = u["update_id"] + 1
             self.save_state()
             m = u.get("message", {})
+            if not self.cfg.get("allowed_user_id"):
+                # Modo configuração (IDs ainda 0): repassa tudo com os IDs reais para quem chamou
+                out.append(((m.get("text") or "").strip() or "(sem texto)",
+                            {"from": m.get("from", {}).get("id"), "chat": m.get("chat", {}).get("id"),
+                             "thread": m.get("message_thread_id")}))
+                continue
             if m.get("from", {}).get("id") != self.cfg["allowed_user_id"]:
                 continue
             if self.cfg.get("topic_id") and m.get("message_thread_id") != self.cfg["topic_id"]:
